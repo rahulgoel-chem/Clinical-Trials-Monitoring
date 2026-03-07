@@ -1,5 +1,6 @@
 import streamlit as st
 import requests
+import time
 from datetime import datetime
 import psycopg2
 from reportlab.lib.pagesizes import letter
@@ -96,6 +97,7 @@ def generate_pdf(condition, start_date, end_date, new_trials, updates):
     file_name = f"trial_report_{condition}_{start_date}_{end_date}.pdf"
 
     c = canvas.Canvas(file_name, pagesize=letter)
+
     width, height = letter
     y = height - 50
 
@@ -112,18 +114,6 @@ def generate_pdf(condition, start_date, end_date, new_trials, updates):
     y -= 30
 
     c.setFont("Helvetica-Bold", 12)
-    c.drawString(60, y, "New Trials")
-
-    y -= 20
-
-    for t in new_trials:
-        for line in wrap(t, 90):
-            c.drawString(60, y, line)
-            y -= 14
-
-    y -= 20
-
-    c.setFont("Helvetica-Bold", 12)
     c.drawString(60, y, "Trial Updates")
 
     y -= 20
@@ -138,7 +128,7 @@ def generate_pdf(condition, start_date, end_date, new_trials, updates):
     return file_name
 
 
-# ---------- STREAMLIT UI ----------
+# ---------- STREAMLIT ----------
 
 st.title("Clinical Trial Intelligence Monitor")
 
@@ -173,13 +163,32 @@ if run:
     studies = []
     next_token = None
 
+    st.write("Fetching trials from ClinicalTrials.gov...")
+
     while True:
 
         if next_token:
             params["pageToken"] = next_token
 
-        r = requests.get(base_url, params=params)
-        data = r.json()
+        # -------- PRODUCTION API REQUEST --------
+
+        try:
+
+            r = requests.get(base_url, params=params, timeout=30)
+
+            if r.status_code != 200:
+                st.warning(f"ClinicalTrials.gov returned status {r.status_code}")
+                break
+
+            try:
+                data = r.json()
+            except ValueError:
+                st.warning("Invalid JSON returned from ClinicalTrials.gov")
+                break
+
+        except requests.exceptions.RequestException:
+            st.warning("Network error contacting ClinicalTrials.gov")
+            st.stop()
 
         studies.extend(data.get("studies", []))
 
@@ -188,9 +197,11 @@ if run:
         if not next_token:
             break
 
+        # ---- Rate-limit protection ----
+        time.sleep(1)
+
     conn = connect_aact()
 
-    new_trials = []
     updates = []
 
     for study in studies:
@@ -225,9 +236,6 @@ if run:
         if not(start_date <= upd_date <= end_date):
             continue
 
-
-        # ----- CURRENT VALUES -----
-
         current_status = status.get("overallStatus")
 
         current_phase = ", ".join(design.get("phases", []))
@@ -250,9 +258,6 @@ if run:
             l.get("country") for l in locations if l.get("country")
         ])))
 
-
-        # ----- PREVIOUS VALUES -----
-
         prev = get_previous_trial_data(conn, nct_id)
 
         if not prev:
@@ -260,7 +265,6 @@ if run:
 
         prev_countries = get_previous_countries(conn, nct_id)
         prev_drugs = get_previous_interventions(conn, nct_id)
-
 
         changes = []
 
@@ -307,7 +311,6 @@ if run:
                 f"[{nct_id}] {sponsor} trial in {conditions}: "
                 + "; ".join(changes)
             )
-
 
     conn.close()
 
