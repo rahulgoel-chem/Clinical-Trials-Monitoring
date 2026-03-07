@@ -312,7 +312,9 @@ if run_button:
                     "completionDateStruct", {}
                 ).get("date", "NA")
 
-                enrollment = design.get("enrollmentInfo", {}).get("count", "NA")
+                enrollment = design.get(
+                    "enrollmentInfo", {}
+                ).get("count", "NA")
 
                 locations = protocol.get(
                     "contactsLocationsModule", {}
@@ -346,14 +348,11 @@ if run_button:
             protocol.get("designModule", {}).get("phases", [])
         ) or "NA"
 
-        current_enrollment_val = protocol.get(
-            "designModule", {}
-        ).get("enrollmentInfo", {}).get("count")
-
-        if current_enrollment_val is not None:
-            current_enrollment = str(current_enrollment_val)
-        else:
-            current_enrollment = "NA"
+        current_enrollment = str(
+            protocol.get("designModule", {})
+            .get("enrollmentInfo", {})
+            .get("count", "NA")
+        )
 
         locations = protocol.get("contactsLocationsModule", {}).get("locations", [])
 
@@ -368,7 +367,7 @@ if run_button:
 
         prev_status = prev["status"]
         prev_phase = prev["phase"]
-        prev_enrollment = str(prev["enrollment"]) if prev["enrollment"] else "NA"
+        prev_enrollment = prev["enrollment"]
 
         prev_countries = get_previous_countries(conn, nct_id)
 
