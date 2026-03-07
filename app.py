@@ -7,8 +7,7 @@ from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 from textwrap import wrap
 
-
-# ---------------- CONFIG ---------------- #
+# -------- CONFIG -------- #
 
 AACT_HOST = st.secrets["AACT_HOST"]
 AACT_DB = st.secrets["AACT_DB"]
@@ -17,9 +16,10 @@ AACT_USER = st.secrets["AACT_USER"]
 AACT_PASS = st.secrets["AACT_PASS"]
 
 
-# ---------------- DATABASE ---------------- #
+# -------- HELPER FUNCTIONS -------- #
 
 def connect_aact():
+
     return psycopg2.connect(
         host=AACT_HOST,
         database=AACT_DB,
@@ -70,10 +70,10 @@ def get_previous_countries(conn, nct_id):
     return sorted([r[0] for r in rows if r[0]])
 
 
-# ---------------- PDF SETTINGS ---------------- #
+# -------- PDF UTILITIES -------- #
 
 LEFT = 60
-RIGHT = 540
+RIGHT = 550
 TOP = 750
 BOTTOM = 60
 
@@ -81,36 +81,23 @@ BOTTOM = 60
 def add_footer(c):
 
     c.setFont("Helvetica",9)
-
     page = c.getPageNumber()
-
-    c.drawCentredString(
-        300,
-        30,
-        f"Clinical Trial Intelligence Report | Page {page}"
-    )
+    c.drawCentredString(300,30,f"Clinical Trial Intelligence Report | Page {page}")
 
 
-def draw_wrapped_text(c,text,x,y,width=95,line_height=14):
-
-    c.setFont("Helvetica",10)
+def draw_wrapped_text(c,text,x,y,width=90,line_height=14):
 
     lines = wrap(text,width)
 
     for line in lines:
 
         if y < BOTTOM:
-
             add_footer(c)
-
             c.showPage()
-
             c.setFont("Helvetica",10)
-
             y = TOP
 
         c.drawString(x,y,line)
-
         y -= line_height
 
     return y
@@ -118,22 +105,18 @@ def draw_wrapped_text(c,text,x,y,width=95,line_height=14):
 
 def draw_section_title(c,title,y,width):
 
-    c.setFont("Helvetica-Bold",12)
-
+    c.setFont("Helvetica-Bold",13)
     c.drawString(50,y,title)
 
     y -= 8
-
     c.line(50,y,width-50,y)
 
     y -= 20
 
-    c.setFont("Helvetica",10)
-
     return y
 
 
-# ---------------- PDF GENERATOR ---------------- #
+# -------- PDF GENERATOR -------- #
 
 def generate_pdf(condition,start_date,end_date,new_trials,updates):
 
@@ -144,72 +127,65 @@ def generate_pdf(condition,start_date,end_date,new_trials,updates):
     c = canvas.Canvas(file_name,pagesize=letter)
 
     width,height = letter
-
-    y = height - 60
-
-
-    # HEADER
+    y = height - 50
 
     c.setFont("Helvetica-Bold",16)
-
     c.drawCentredString(width/2,y,"CLINICAL TRIAL INTELLIGENCE REPORT")
 
-    y -= 35
-
+    y -= 30
 
     c.setFont("Helvetica",11)
-
     c.drawString(50,y,f"Disease: {condition}")
 
     y -= 15
-
     c.drawString(50,y,f"Monitoring Window: {start_date} to {end_date}")
 
     y -= 15
-
     c.drawString(50,y,f"Generated on: {datetime.today().date()}")
 
-    y -= 30
-
+    y -= 25
     c.line(40,y,width-40,y)
 
-    y -= 30
+    y -= 25
 
+    c.setFont("Helvetica-Bold",12)
+    c.drawString(50,y,"SUMMARY")
 
-    # SUMMARY
-
-    y = draw_section_title(c,"SUMMARY",y,width)
-
-    y = draw_wrapped_text(c,f"Total New Trials: {len(new_trials)}",60,y)
-
-    y = draw_wrapped_text(c,f"Total Updated Trials: {len(updates)}",60,y)
+    y -= 10
+    c.line(50,y,width-50,y)
 
     y -= 20
 
+    c.setFont("Helvetica",11)
+    c.drawString(60,y,f"Total New Trials: {len(new_trials)}")
 
-    # NEW TRIALS
+    y -= 15
+    c.drawString(60,y,f"Total Updated Trials: {len(updates)}")
 
-    y = draw_section_title(c,"NEW TRIALS",y,width)
+    y -= 30
+
+    y = draw_section_title(c,"NEW INDUSTRY TRIALS",y,width)
+
+    c.setFont("Helvetica",10)
 
     if not new_trials:
 
-        y = draw_wrapped_text(c,"No new trials detected.",60,y)
+        y = draw_wrapped_text(c,"No new industry trials detected.",60,y)
 
     else:
 
         for trial in new_trials:
 
-            y = draw_wrapped_text(c,f"• {trial}",60,y)
+            trial_text = f"• {trial}"
+            y = draw_wrapped_text(c,trial_text,60,y)
 
             y -= 5
 
-
     y -= 20
 
-
-    # UPDATES
-
     y = draw_section_title(c,"TRIAL UPDATES",y,width)
+
+    c.setFont("Helvetica",10)
 
     if not updates:
 
@@ -219,19 +195,18 @@ def generate_pdf(condition,start_date,end_date,new_trials,updates):
 
         for upd in updates:
 
-            y = draw_wrapped_text(c,f"• {upd}",60,y)
+            upd_text = f"• {upd}"
+            y = draw_wrapped_text(c,upd_text,60,y)
 
             y -= 5
 
-
     add_footer(c)
-
     c.save()
 
     return file_name
 
 
-# ---------------- STREAMLIT UI ---------------- #
+# -------- STREAMLIT UI -------- #
 
 st.title("Clinical Trial Intelligence Monitor")
 
@@ -253,7 +228,6 @@ if run_button:
 
     base_url = "https://clinicaltrials.gov/api/v2/studies"
 
-
     fields = [
         "protocolSection.identificationModule",
         "protocolSection.statusModule",
@@ -263,26 +237,19 @@ if run_button:
         "protocolSection.conditionsModule"
     ]
 
-
     params = {
         "query.cond": condition,
         "fields": ",".join(fields),
         "pageSize":1000
     }
 
-
     response = requests.get(base_url,params=params)
-
     studies = response.json().get("studies",[])
-
 
     conn = connect_aact()
 
-
     new_trials = []
-
     updates = []
-
 
     for study in studies:
 
@@ -290,146 +257,82 @@ if run_button:
         status = protocol.get("statusModule", {})
         sponsor_mod = protocol.get("sponsorCollaboratorsModule", {})
 
-        ident = protocol.get("identificationModule", {})
-        nct_id = ident.get("nctId")
-        title = ident.get("briefTitle","")
-
-        sponsor = sponsor_mod.get("leadSponsor",{}).get("name","NA")
-
-        conditions = ", ".join(
-            protocol.get("conditionsModule",{}).get("conditions",[])
-        )
-
-
-        # -------- NEW TRIAL DETECTION -------- #
-
-        first_post_str = status.get(
-            "studyFirstPostDateStruct",{}
-        ).get("date")
-
-        if first_post_str:
-
-            first_post_date = datetime.strptime(
-                first_post_str,"%Y-%m-%d"
-            ).date()
-
-            if start_date <= first_post_date <= end_date:
-
-                design = protocol.get("designModule",{})
-
-                enrollment = design.get(
-                    "enrollmentInfo",{}
-                ).get("count","NA")
-
-                study_type = design.get("studyType","NA")
-
-                intervention = design.get(
-                    "designInfo",{}
-                ).get("interventionModel","NA")
-
-                locations = protocol.get(
-                    "contactsLocationsModule",{}
-                ).get("locations",[])
-
-                countries = sorted(list(set([
-                    l.get("country") for l in locations if l.get("country")
-                ])))
-
-                countries_str = ", ".join(countries) if countries else "NA"
-
-                trial_design = f"{study_type}; {intervention}"
-
-                new_trials.append(
-
-                    f"[{nct_id}] {sponsor} started NEW trial: {title}; "
-                    f"Enrollment: {enrollment}; "
-                    f"Countries: {countries_str}; "
-                    f"Design: {trial_design}"
-
-                )
-
-                continue
-
-
-        # -------- UPDATE DETECTION -------- #
-
-        upd_date_str = status.get(
-            "lastUpdatePostDateStruct",{}
-        ).get("date")
+        upd_date_str = status.get("lastUpdatePostDateStruct", {}).get("date")
 
         if not upd_date_str:
             continue
 
-
-        upd_date = datetime.strptime(upd_date_str,"%Y-%m-%d")
+        upd_date = datetime.strptime(upd_date_str, "%Y-%m-%d")
 
         if not (start_date <= upd_date.date() <= end_date):
             continue
 
+        sponsor_class = sponsor_mod.get("leadSponsor", {}).get("class", "")
 
-        prev = get_previous_trial_data(conn,nct_id)
-
-        if not prev:
+        if sponsor_class.upper() != "INDUSTRY":
             continue
 
 
-        design = protocol.get("designModule",{})
+        ident = protocol.get("identificationModule", {})
+        nct_id = ident.get("nctId")
+        title = ident.get("briefTitle", "")
 
-        current_status = status.get("overallStatus","NA")
+        sponsor = sponsor_mod.get("leadSponsor", {}).get("name", "NA")
+
+        conditions = ", ".join(
+            protocol.get("conditionsModule", {}).get("conditions", [])
+        )
+
+        prev = get_previous_trial_data(conn, nct_id)
+
+        if not prev:
+
+            new_trials.append(
+                f"[{nct_id}] {sponsor} started NEW trial: {title}"
+            )
+
+            continue
+
+
+        current_status = status.get("overallStatus", "NA")
 
         current_phase = ", ".join(
-            design.get("phases",[])
+            protocol.get("designModule", {}).get("phases", [])
         ) or "NA"
 
-        current_enrollment = design.get(
-            "enrollmentInfo",{}
-        ).get("count","NA")
-
-
-        prev_status = prev["status"]
-        prev_phase = prev["phase"]
-        prev_enrollment = prev["enrollment"]
-
-        prev_countries = get_previous_countries(conn,nct_id)
-
-        locations = protocol.get(
-            "contactsLocationsModule",{}
-        ).get("locations",[]
+        current_enrollment = str(
+            status.get("enrollmentStruct", {}).get("count", "NA")
         )
+
+        locations = protocol.get("contactsLocationsModule", {}).get("locations", [])
 
         current_countries = sorted(list(set([
             loc.get("country") for loc in locations if loc.get("country")
         ])))
 
-        changes = []
+        prev_status = prev["status"]
+        prev_phase = prev["phase"]
+        prev_enrollment = prev["enrollment"]
 
+        prev_countries = get_previous_countries(conn, nct_id)
+
+        changes = []
 
         if current_status != prev_status:
             changes.append(f"Status: {prev_status} → {current_status}")
 
-
         if current_phase != prev_phase:
             changes.append(f"Phase: {prev_phase} → {current_phase}")
 
-
-        if (
-            prev_enrollment != "NA"
-            and current_enrollment != "NA"
-            and str(current_enrollment) != str(prev_enrollment)
-        ):
-            changes.append(
-                f"Enrollment: {prev_enrollment} → {current_enrollment}"
-            )
-
+        if current_enrollment != prev_enrollment:
+            changes.append(f"Enrollment: {prev_enrollment} → {current_enrollment}")
 
         added_countries = list(set(current_countries) - set(prev_countries))
 
         if added_countries:
-
             changes.append(
                 "New Countries Added: " + ", ".join(added_countries)
             )
-
 
         if changes:
 
@@ -441,20 +344,10 @@ if run_button:
 
     conn.close()
 
-
     st.success(f"Total New Trials: {len(new_trials)}")
-
     st.success(f"Total Updates: {len(updates)}")
 
-
-    file_name = generate_pdf(
-        condition,
-        start_date_input,
-        end_date_input,
-        new_trials,
-        updates
-    )
-
+    file_name = generate_pdf(condition,start_date_input,end_date_input,new_trials,updates)
 
     with open(file_name,"rb") as f:
 
