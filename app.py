@@ -2,6 +2,7 @@ import streamlit as st
 import requests
 from datetime import datetime
 import psycopg2
+
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 from textwrap import wrap
@@ -14,9 +15,11 @@ AACT_PORT = st.secrets["AACT_PORT"]
 AACT_USER = st.secrets["AACT_USER"]
 AACT_PASS = st.secrets["AACT_PASS"]
 
-# -------- DATABASE -------- #
+
+# -------- HELPER FUNCTIONS -------- #
 
 def connect_aact():
+
     return psycopg2.connect(
         host=AACT_HOST,
         database=AACT_DB,
@@ -66,6 +69,7 @@ def get_previous_countries(conn, nct_id):
 
     return sorted([r[0] for r in rows if r[0]])
 
+
 # -------- PDF UTILITIES -------- #
 
 LEFT = 60
@@ -75,6 +79,7 @@ BOTTOM = 60
 
 
 def add_footer(c):
+
     c.setFont("Helvetica",9)
     page = c.getPageNumber()
     c.drawCentredString(300,30,f"Clinical Trial Intelligence Report | Page {page}")
@@ -164,23 +169,35 @@ def generate_pdf(condition,start_date,end_date,new_trials,updates):
     c.setFont("Helvetica",10)
 
     if not new_trials:
+
         y = draw_wrapped_text(c,"No new industry trials detected.",60,y)
 
     else:
+
         for trial in new_trials:
-            y = draw_wrapped_text(c,f"• {trial}",60,y)
+
+            trial_text = f"• {trial}"
+            y = draw_wrapped_text(c,trial_text,60,y)
+
             y -= 5
 
     y -= 20
 
     y = draw_section_title(c,"TRIAL UPDATES",y,width)
 
+    c.setFont("Helvetica",10)
+
     if not updates:
+
         y = draw_wrapped_text(c,"No trial updates detected.",60,y)
 
     else:
+
         for upd in updates:
-            y = draw_wrapped_text(c,f"• {upd}",60,y)
+
+            upd_text = f"• {upd}"
+            y = draw_wrapped_text(c,upd_text,60,y)
+
             y -= 5
 
     add_footer(c)
@@ -201,9 +218,13 @@ end_date = st.date_input("End Date")
 
 run_button = st.button("Run Analysis")
 
+
 if run_button:
 
     st.write("Fetching trials...")
+
+    start_date_input = start_date.strftime("%Y-%m-%d")
+    end_date_input = end_date.strftime("%Y-%m-%d")
 
     base_url = "https://clinicaltrials.gov/api/v2/studies"
 
@@ -222,8 +243,23 @@ if run_button:
         "pageSize":1000
     }
 
-    response = requests.get(base_url,params=params)
-    studies = response.json().get("studies",[])
+    studies = []
+next_token = None
+
+while True:
+
+    if next_token:
+        params["pageToken"] = next_token
+
+    response = requests.get(base_url, params=params)
+    data = response.json()
+
+    studies.extend(data.get("studies", []))
+
+    next_token = data.get("nextPageToken")
+
+    if not next_token:
+        break
 
     conn = connect_aact()
 
@@ -233,64 +269,57 @@ if run_button:
     for study in studies:
 
         protocol = study.get("protocolSection", {})
-
         status = protocol.get("statusModule", {})
         sponsor_mod = protocol.get("sponsorCollaboratorsModule", {})
-
-        sponsor_class = sponsor_mod.get("leadSponsor", {}).get("class", "")
-
-        if sponsor_class.upper() != "INDUSTRY":
-            continue
-
-        ident = protocol.get("identificationModule", {})
-
-        nct_id = ident.get("nctId")
-        title = ident.get("briefTitle", "")
-        sponsor = sponsor_mod.get("leadSponsor", {}).get("name", "NA")
-
-        conditions = ", ".join(
-            protocol.get("conditionsModule", {}).get("conditions", [])
-        )
-
-        # -------- NEW TRIAL CHECK -------- #
-
-        first_post_str = status.get("studyFirstPostDateStruct", {}).get("date")
-
-        if first_post_str:
-
-            first_post_date = datetime.strptime(first_post_str,"%Y-%m-%d").date()
-
-            if start_date <= first_post_date <= end_date:
-
-                new_trials.append(
-                    f"[{nct_id}] {sponsor} started NEW trial: {title}"
-                )
-
-        # -------- UPDATE CHECK -------- #
 
         upd_date_str = status.get("lastUpdatePostDateStruct", {}).get("date")
 
         if not upd_date_str:
             continue
 
-        upd_date = datetime.strptime(upd_date_str,"%Y-%m-%d").date()
+        upd_date = datetime.strptime(upd_date_str, "%Y-%m-%d")
 
-        if not (start_date <= upd_date <= end_date):
+        if not (start_date <= upd_date.date() <= end_date):
             continue
 
-        prev = get_previous_trial_data(conn,nct_id)
+        sponsor_class = sponsor_mod.get("leadSponsor", {}).get("class", "")
 
-        if not prev:
+        if sponsor_class.upper() != "INDUSTRY":
             continue
 
-        current_status = status.get("overallStatus","NA")
+
+        ident = protocol.get("identificationModule", {})
+        nct_id = ident.get("nctId")
+        title = ident.get("briefTitle", "")
+
+        sponsor = sponsor_mod.get("leadSponsor", {}).get("name", "NA")
+
+        conditions = ", ".join(
+            protocol.get("conditionsModule", {}).get("conditions", [])
+        )
+
+        # -------- NEW TRIAL DETECTION -------- #
+
+        first_post_str = status.get("studyFirstPostDateStruct", {}).get("date")
+        
+        if first_post_str:
+        
+            first_post_date = datetime.strptime(first_post_str, "%Y-%m-%d").date()
+        
+            if start_date <= first_post_date <= end_date:
+        
+                new_trials.append(
+                    f"[{nct_id}] {sponsor} started NEW trial: {title}"
+                )
+
+        current_status = status.get("overallStatus", "NA")
 
         current_phase = ", ".join(
             protocol.get("designModule", {}).get("phases", [])
         ) or "NA"
 
         current_enrollment = str(
-            protocol.get("designModule", {}).get("enrollmentInfo", {}).get("count","NA")
+            status.get("enrollmentStruct", {}).get("count", "NA")
         )
 
         locations = protocol.get("contactsLocationsModule", {}).get("locations", [])
@@ -303,7 +332,7 @@ if run_button:
         prev_phase = prev["phase"]
         prev_enrollment = prev["enrollment"]
 
-        prev_countries = get_previous_countries(conn,nct_id)
+        prev_countries = get_previous_countries(conn, nct_id)
 
         changes = []
 
@@ -319,7 +348,9 @@ if run_button:
         added_countries = list(set(current_countries) - set(prev_countries))
 
         if added_countries:
-            changes.append("New Countries Added: " + ", ".join(added_countries))
+            changes.append(
+                "New Countries Added: " + ", ".join(added_countries)
+            )
 
         if changes:
 
@@ -328,12 +359,13 @@ if run_button:
                 + "; ".join(changes)
             )
 
+
     conn.close()
 
     st.success(f"Total New Trials: {len(new_trials)}")
     st.success(f"Total Updates: {len(updates)}")
 
-    file_name = generate_pdf(condition,start_date,end_date,new_trials,updates)
+    file_name = generate_pdf(condition,start_date_input,end_date_input,new_trials,updates)
 
     with open(file_name,"rb") as f:
 
