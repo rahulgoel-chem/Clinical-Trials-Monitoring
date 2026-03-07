@@ -254,16 +254,16 @@ if run_button:
 
     for study in studies:
 
-        protocol = study.get("protocolSection", {})
-        status = protocol.get("statusModule", {})
-        sponsor_mod = protocol.get("sponsorCollaboratorsModule", {})
+    protocol = study.get("protocolSection", {})
+    status = protocol.get("statusModule", {})
+    sponsor_mod = protocol.get("sponsorCollaboratorsModule", {})
 
-        upd_date_str = status.get("lastUpdatePostDateStruct", {}).get("date")
+    upd_date_str = status.get("lastUpdatePostDateStruct", {}).get("date")
 
     if not upd_date_str:
         continue
 
-        upd_date = datetime.strptime(upd_date_str, "%Y-%m-%d")
+    upd_date = datetime.strptime(upd_date_str, "%Y-%m-%d")
 
     if not (start_date <= upd_date.date() <= end_date):
         continue
