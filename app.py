@@ -312,8 +312,8 @@ if run_button:
                     "completionDateStruct", {}
                 ).get("date", "NA")
 
-                enrollment = status.get(
-                    "enrollmentStruct", {}
+                enrollment = design.get(
+                    "enrollmentInfo", {}
                 ).get("count", "NA")
 
                 locations = protocol.get(
@@ -326,13 +326,6 @@ if run_button:
 
                 countries_text = ", ".join(countries) if countries else "NA"
 
-                allocation = design.get("allocation", "NA")
-                intervention_model = design.get("interventionModel", "NA")
-                masking = design.get("maskingInfo", {}).get("masking", "NA")
-                purpose = design.get("primaryPurpose", "NA")
-
-                trial_design = f"{allocation}, {intervention_model}, {masking}, {purpose}"
-
                 trial_report = (
                     f"[{nct_id}] {sponsor} started NEW trial: {title} | "
                     f"Phase: {phase} | "
@@ -340,8 +333,7 @@ if run_button:
                     f"Primary Completion: {primary_completion} | "
                     f"Study Completion: {study_completion} | "
                     f"Enrollment: {enrollment} | "
-                    f"Countries: {countries_text} | "
-                    f"Design: {trial_design}"
+                    f"Countries: {countries_text}"
                 )
 
                 if nct_id not in seen_trials:
@@ -357,7 +349,9 @@ if run_button:
         ) or "NA"
 
         current_enrollment = str(
-            status.get("enrollmentStruct", {}).get("count", "NA")
+            protocol.get("designModule", {})
+            .get("enrollmentInfo", {})
+            .get("count", "NA")
         )
 
         locations = protocol.get("contactsLocationsModule", {}).get("locations", [])
