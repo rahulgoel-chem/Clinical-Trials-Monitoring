@@ -1,3 +1,4 @@
+import streamlit as st
 import requests
 from datetime import datetime
 import psycopg2
@@ -6,19 +7,19 @@ from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 from textwrap import wrap
 
-
 # -------- CONFIG -------- #
 
-AACT_HOST = "aact-db.ctti-clinicaltrials.org"
-AACT_DB = "aact"
-AACT_PORT = 5432
-AACT_USER = "theranode"
-AACT_PASS = "R@hul046"
+AACT_HOST = st.secrets["AACT_HOST"]
+AACT_DB = st.secrets["AACT_DB"]
+AACT_PORT = st.secrets["AACT_PORT"]
+AACT_USER = st.secrets["AACT_USER"]
+AACT_PASS = st.secrets["AACT_PASS"]
 
 
 # -------- HELPER FUNCTIONS -------- #
 
 def connect_aact():
+
     return psycopg2.connect(
         host=AACT_HOST,
         database=AACT_DB,
@@ -128,9 +129,6 @@ def generate_pdf(condition,start_date,end_date,new_trials,updates):
     width,height = letter
     y = height - 50
 
-
-    # ---- HEADER ---- #
-
     c.setFont("Helvetica-Bold",16)
     c.drawCentredString(width/2,y,"CLINICAL TRIAL INTELLIGENCE REPORT")
 
@@ -150,9 +148,6 @@ def generate_pdf(condition,start_date,end_date,new_trials,updates):
 
     y -= 25
 
-
-    # ---- SUMMARY ---- #
-
     c.setFont("Helvetica-Bold",12)
     c.drawString(50,y,"SUMMARY")
 
@@ -168,9 +163,6 @@ def generate_pdf(condition,start_date,end_date,new_trials,updates):
     c.drawString(60,y,f"Total Updated Trials: {len(updates)}")
 
     y -= 30
-
-
-    # ---- NEW TRIALS ---- #
 
     y = draw_section_title(c,"NEW INDUSTRY TRIALS",y,width)
 
@@ -189,11 +181,7 @@ def generate_pdf(condition,start_date,end_date,new_trials,updates):
 
             y -= 5
 
-
     y -= 20
-
-
-    # ---- UPDATES ---- #
 
     y = draw_section_title(c,"TRIAL UPDATES",y,width)
 
@@ -212,26 +200,32 @@ def generate_pdf(condition,start_date,end_date,new_trials,updates):
 
             y -= 5
 
-
     add_footer(c)
 
     c.save()
 
-    print("\nPDF REPORT GENERATED:",file_name)
+    return file_name
 
 
-# -------- MAIN PIPELINE -------- #
+# -------- STREAMLIT UI -------- #
 
-def fetch_and_report_updates():
+st.title("Clinical Trial Intelligence Monitor")
 
-    print("\n===== CLINICAL TRIAL INTELLIGENCE MONITOR =====\n")
+condition = st.text_input("Disease / Condition")
 
-    condition = input("Disease / condition search: ")
-    start_date_input = input("Start date (YYYY-MM-DD): ")
-    end_date_input = input("End date (YYYY-MM-DD): ")
+start_date = st.date_input("Start Date")
 
-    start_date = datetime.strptime(start_date_input,"%Y-%m-%d")
-    end_date = datetime.strptime(end_date_input,"%Y-%m-%d")
+end_date = st.date_input("End Date")
+
+run_button = st.button("Run Analysis")
+
+
+if run_button:
+
+    st.write("Fetching trials...")
+
+    start_date_input = start_date.strftime("%Y-%m-%d")
+    end_date_input = end_date.strftime("%Y-%m-%d")
 
     base_url = "https://clinicaltrials.gov/api/v2/studies"
 
@@ -250,8 +244,6 @@ def fetch_and_report_updates():
         "pageSize":1000
     }
 
-    print("\nFetching trials...\n")
-
     response = requests.get(base_url,params=params)
     studies = response.json().get("studies",[])
 
@@ -259,7 +251,6 @@ def fetch_and_report_updates():
 
     new_trials = []
     updates = []
-
 
     for study in studies:
 
@@ -274,7 +265,7 @@ def fetch_and_report_updates():
 
         upd_date = datetime.strptime(upd_date_str,"%Y-%m-%d")
 
-        if not(start_date <= upd_date <= end_date):
+        if not(start_date <= upd_date.date() <= end_date):
             continue
 
         sponsor_class = sponsor_mod.get("leadSponsor",{}).get("class","")
@@ -291,22 +282,6 @@ def fetch_and_report_updates():
 
         conditions = ", ".join(protocol.get("conditionsModule",{}).get("conditions",[]))
 
-        current_status = status.get("overallStatus","NA")
-
-        current_phase = ", ".join(
-            protocol.get("designModule",{}).get("phases",[])
-        ) or "NA"
-
-        current_enrollment = str(
-            status.get("enrollmentStruct",{}).get("count","NA")
-        )
-
-        current_locs = protocol.get("contactsLocationsModule",{}).get("locations",[])
-
-        current_countries = sorted(list(set([
-            loc.get("country") for loc in current_locs if loc.get("country")
-        ])))
-
         prev = get_previous_trial_data(conn,nct_id)
 
         if not prev:
@@ -317,45 +292,23 @@ def fetch_and_report_updates():
 
             continue
 
-        prev_status = prev["status"]
-        prev_phase = prev["phase"]
-        prev_enrollment = prev["enrollment"]
-
         prev_countries = get_previous_countries(conn,nct_id)
 
-        changes = []
-
-        if current_status != prev_status:
-            changes.append(f"Status: {prev_status} -> {current_status}")
-
-        if current_phase != prev_phase:
-            changes.append(f"Phase: {prev_phase} -> {current_phase}")
-
-        if current_enrollment != prev_enrollment:
-            changes.append(f"Enrollment: {prev_enrollment} -> {current_enrollment}")
-
-        added_sites = list(set(current_countries) - set(prev_countries))
-
-        if added_sites:
-            changes.append(f"New Countries Added: {', '.join(added_sites)}")
-
-        if changes:
-
-            updates.append(
-                f"[{nct_id}] {sponsor} trial in {conditions}: "
-                + "; ".join(changes)
-            )
+        updates.append(
+            f"[{nct_id}] {sponsor} trial in {conditions} updated."
+        )
 
     conn.close()
 
-    print("\nTotal new trials:",len(new_trials))
-    print("Total updates:",len(updates))
+    st.success(f"Total New Trials: {len(new_trials)}")
+    st.success(f"Total Updates: {len(updates)}")
 
-    generate_pdf(condition,start_date_input,end_date_input,new_trials,updates)
+    file_name = generate_pdf(condition,start_date_input,end_date_input,new_trials,updates)
 
-    print("\nAnalysis complete.\n")
+    with open(file_name,"rb") as f:
 
-
-# -------- RUN -------- #
-
-fetch_and_report_updates()
+        st.download_button(
+            "Download PDF Report",
+            f,
+            file_name=file_name
+        )
