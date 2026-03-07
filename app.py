@@ -252,7 +252,7 @@ if run_button:
     new_trials = []
     updates = []
 
-    for study in studies:
+for study in studies:
 
     protocol = study.get("protocolSection", {})
     status = protocol.get("statusModule", {})
