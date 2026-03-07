@@ -19,7 +19,6 @@ AACT_PASS = st.secrets["AACT_PASS"]
 # -------- HELPER FUNCTIONS -------- #
 
 def connect_aact():
-
     return psycopg2.connect(
         host=AACT_HOST,
         database=AACT_DB,
@@ -169,35 +168,21 @@ def generate_pdf(condition,start_date,end_date,new_trials,updates):
     c.setFont("Helvetica",10)
 
     if not new_trials:
-
         y = draw_wrapped_text(c,"No new industry trials detected.",60,y)
-
     else:
-
         for trial in new_trials:
-
-            trial_text = f"• {trial}"
-            y = draw_wrapped_text(c,trial_text,60,y)
-
+            y = draw_wrapped_text(c,f"• {trial}",60,y)
             y -= 5
 
     y -= 20
 
     y = draw_section_title(c,"TRIAL UPDATES",y,width)
 
-    c.setFont("Helvetica",10)
-
     if not updates:
-
         y = draw_wrapped_text(c,"No trial updates detected.",60,y)
-
     else:
-
         for upd in updates:
-
-            upd_text = f"• {upd}"
-            y = draw_wrapped_text(c,upd_text,60,y)
-
+            y = draw_wrapped_text(c,f"• {upd}",60,y)
             y -= 5
 
     add_footer(c)
@@ -234,7 +219,8 @@ if run_button:
         "protocolSection.designModule",
         "protocolSection.sponsorCollaboratorsModule",
         "protocolSection.contactsLocationsModule",
-        "protocolSection.conditionsModule"
+        "protocolSection.conditionsModule",
+        "protocolSection.armsInterventionsModule"
     ]
 
     params = {
@@ -257,21 +243,10 @@ if run_button:
         status = protocol.get("statusModule", {})
         sponsor_mod = protocol.get("sponsorCollaboratorsModule", {})
 
-        upd_date_str = status.get("lastUpdatePostDateStruct", {}).get("date")
-
-        if not upd_date_str:
-            continue
-
-        upd_date = datetime.strptime(upd_date_str, "%Y-%m-%d")
-
-        if not (start_date <= upd_date.date() <= end_date):
-            continue
-
         sponsor_class = sponsor_mod.get("leadSponsor", {}).get("class", "")
 
         if sponsor_class.upper() != "INDUSTRY":
             continue
-
 
         ident = protocol.get("identificationModule", {})
         nct_id = ident.get("nctId")
@@ -279,54 +254,87 @@ if run_button:
 
         sponsor = sponsor_mod.get("leadSponsor", {}).get("name", "NA")
 
-        conditions = ", ".join(
-            protocol.get("conditionsModule", {}).get("conditions", [])
-        )
+        # ---------- NEW TRIAL DETECTION ---------- #
 
         first_post_date_str = status.get(
-    "studyFirstPostDateStruct", {}
-).get("date")
+            "studyFirstPostDateStruct", {}
+        ).get("date")
 
-if first_post_date_str:
+        if first_post_date_str:
 
-    first_post_date = datetime.strptime(
-        first_post_date_str, "%Y-%m-%d"
-    ).date()
+            first_post_date = datetime.strptime(
+                first_post_date_str,"%Y-%m-%d"
+            ).date()
 
-else:
-    first_post_date = None
+        else:
+            first_post_date = None
 
 
-if first_post_date and start_date <= first_post_date <= end_date:
+        if first_post_date and start_date <= first_post_date <= end_date:
+
+            start_trial = status.get("startDateStruct",{}).get("date","NA")
+            primary_completion = status.get("primaryCompletionDateStruct",{}).get("date","NA")
+            completion_date = status.get("completionDateStruct",{}).get("date","NA")
+
+            enrollment = str(status.get("enrollmentStruct",{}).get("count","NA"))
+
+            arms_mod = protocol.get("armsInterventionsModule",{})
+            arms = ", ".join([a.get("label") for a in arms_mod.get("armGroups",[])]) or "NA"
+
+            locations = protocol.get("contactsLocationsModule",{}).get("locations",[])
+            countries = sorted(list(set([l.get("country") for l in locations if l.get("country")])))
+            countries_str = ", ".join(countries) if countries else "NA"
+
+            design = protocol.get("designModule",{})
+            study_type = design.get("studyType","NA")
+            allocation = design.get("designInfo",{}).get("allocation","NA")
+            intervention = design.get("designInfo",{}).get("interventionModel","NA")
+            masking = design.get("designInfo",{}).get("maskingInfo",{}).get("masking","NA")
+
+            trial_design = f"{study_type}; {allocation}; {intervention}; Masking: {masking}"
 
             new_trials.append(
-                f"[{nct_id}] {sponsor} started NEW trial: {title}"
+                f"[{nct_id}] {sponsor} started NEW trial: {title}; "
+                f"Start: {start_trial}; Primary Completion: {primary_completion}; "
+                f"Completion: {completion_date}; Enrollment: {enrollment}; "
+                f"Arms: {arms}; Countries: {countries_str}; Design: {trial_design}"
             )
 
             continue
 
 
-        current_status = status.get("overallStatus", "NA")
+        # ---------- UPDATE DETECTION ---------- #
+
+        upd_date_str = status.get("lastUpdatePostDateStruct", {}).get("date")
+
+        if not upd_date_str:
+            continue
+
+        upd_date = datetime.strptime(upd_date_str,"%Y-%m-%d")
+
+        if not (start_date <= upd_date.date() <= end_date):
+            continue
+
+
+        prev = get_previous_trial_data(conn,nct_id)
+
+        if not prev:
+            continue
+
+
+        current_status = status.get("overallStatus","NA")
 
         current_phase = ", ".join(
-            protocol.get("designModule", {}).get("phases", [])
+            protocol.get("designModule",{}).get("phases",[])
         ) or "NA"
 
         current_enrollment = str(
-            status.get("enrollmentStruct", {}).get("count", "NA")
+            status.get("enrollmentStruct",{}).get("count","NA")
         )
-
-        locations = protocol.get("contactsLocationsModule", {}).get("locations", [])
-
-        current_countries = sorted(list(set([
-            loc.get("country") for loc in locations if loc.get("country")
-        ])))
 
         prev_status = prev["status"]
         prev_phase = prev["phase"]
         prev_enrollment = prev["enrollment"]
-
-        prev_countries = get_previous_countries(conn, nct_id)
 
         changes = []
 
@@ -339,17 +347,10 @@ if first_post_date and start_date <= first_post_date <= end_date:
         if current_enrollment != prev_enrollment:
             changes.append(f"Enrollment: {prev_enrollment} → {current_enrollment}")
 
-        added_countries = list(set(current_countries) - set(prev_countries))
-
-        if added_countries:
-            changes.append(
-                "New Countries Added: " + ", ".join(added_countries)
-            )
-
         if changes:
 
             updates.append(
-                f"[{nct_id}] {sponsor} trial in {conditions}: "
+                f"[{nct_id}] {sponsor} trial update: "
                 + "; ".join(changes)
             )
 
