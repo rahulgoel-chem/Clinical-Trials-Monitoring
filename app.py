@@ -221,7 +221,7 @@ def run_analysis(condition, start_date, end_date):
         if not upd_date_str:
             continue
 
-        upd_date = datetime.strptime(upd_date_str, "%Y-%m-%d")
+        upd_date = datetime.strptime(upd_date_str, "%Y-%m-%d").date()
 
         if not (start_date <= upd_date <= end_date):
             continue
