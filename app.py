@@ -283,9 +283,21 @@ if run_button:
             protocol.get("conditionsModule", {}).get("conditions", [])
         )
 
-        prev = get_previous_trial_data(conn, nct_id)
+        first_post_date_str = status.get(
+    "studyFirstPostDateStruct", {}
+).get("date")
 
-        if not prev:
+if first_post_date_str:
+
+    first_post_date = datetime.strptime(
+        first_post_date_str, "%Y-%m-%d"
+    ).date()
+
+else:
+    first_post_date = None
+
+
+if first_post_date and start_date <= first_post_date <= end_date:
 
             new_trials.append(
                 f"[{nct_id}] {sponsor} started NEW trial: {title}"
