@@ -299,6 +299,8 @@ if run_button:
                     f"[{nct_id}] {sponsor} started NEW trial: {title}"
                 )
 
+                continue   # CHANGE 1: prevent duplicates
+
         current_status = status.get("overallStatus", "NA")
 
         current_phase = ", ".join(
@@ -306,7 +308,7 @@ if run_button:
         ) or "NA"
 
         current_enrollment = str(
-            status.get("enrollmentStruct", {}).get("count", "NA")
+            protocol.get("designModule", {}).get("enrollmentInfo", {}).get("count", "NA")
         )
 
         locations = protocol.get("contactsLocationsModule", {}).get("locations", [])
@@ -342,7 +344,7 @@ if run_button:
         if added_countries:
             changes.append("New Countries Added: " + ", ".join(added_countries))
 
-        if changes:
+        if changes and prev["status"] != "NA":   # CHANGE 2
 
             updates.append(
                 f"[{nct_id}] {sponsor} trial in {conditions}: "
@@ -353,6 +355,18 @@ if run_button:
 
     st.success(f"Total New Trials: {len(new_trials)}")
     st.success(f"Total Updates: {len(updates)}")
+
+    # CHANGE 3: show results before PDF
+
+    st.subheader("New Trials")
+
+    for t in new_trials[:10]:
+        st.write(t)
+
+    st.subheader("Trial Updates")
+
+    for u in updates[:10]:
+        st.write(u)
 
     file_name = generate_pdf(
         condition,
