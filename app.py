@@ -42,6 +42,7 @@ def get_previous_trial_data(conn, nct_id):
 
     cur.execute(query, (nct_id,))
     row = cur.fetchone()
+
     cur.close()
 
     if row:
@@ -89,7 +90,7 @@ def get_previous_drugs(conn, nct_id):
     return sorted([r[0] for r in rows if r[0]])
 
 
-# -------- PDF -------- #
+# -------- PDF UTILITIES -------- #
 
 LEFT = 60
 RIGHT = 550
@@ -133,12 +134,15 @@ def draw_section_title(c, title, y, width):
     return y
 
 
+# -------- PDF GENERATOR -------- #
+
 def generate_pdf(condition, start_date, end_date, new_trials, updates):
 
     file_name = f"clinical_trial_report_{condition}.pdf"
 
     c = canvas.Canvas(file_name, pagesize=letter)
     width, height = letter
+
     y = height - 50
 
     c.setFont("Helvetica-Bold", 16)
@@ -151,19 +155,32 @@ def generate_pdf(condition, start_date, end_date, new_trials, updates):
     y -= 15
     c.drawString(50, y, f"Monitoring Window: {start_date} to {end_date}")
 
+    y -= 25
+    c.line(40, y, width - 40, y)
+
     y -= 30
 
     y = draw_section_title(c, "NEW TRIALS", y, width)
 
-    for t in new_trials:
-        y = draw_wrapped_text(c, f"• {t}", 60, y)
+    if not new_trials:
+        y = draw_wrapped_text(c, "No new trials detected.", 60, y)
+
+    else:
+        for t in new_trials:
+            y = draw_wrapped_text(c, f"• {t}", 60, y)
+            y -= 5
 
     y -= 20
 
     y = draw_section_title(c, "TRIAL UPDATES", y, width)
 
-    for u in updates:
-        y = draw_wrapped_text(c, f"• {u}", 60, y)
+    if not updates:
+        y = draw_wrapped_text(c, "No updates detected.", 60, y)
+
+    else:
+        for u in updates:
+            y = draw_wrapped_text(c, f"• {u}", 60, y)
+            y -= 5
 
     add_footer(c)
     c.save()
@@ -195,7 +212,7 @@ if run_button:
         "protocolSection.sponsorCollaboratorsModule",
         "protocolSection.contactsLocationsModule",
         "protocolSection.conditionsModule",
-        "protocolSection.armsInterventionsModule"
+        "protocolSection.armsInterventionsModule"   # IMPORTANT
     ]
 
     params = {
@@ -230,20 +247,19 @@ if run_button:
 
         protocol = study.get("protocolSection", {})
         status = protocol.get("statusModule", {})
-        design = protocol.get("designModule", {})
         sponsor_mod = protocol.get("sponsorCollaboratorsModule", {})
+        design = protocol.get("designModule", {})
         ident = protocol.get("identificationModule", {})
 
         nct_id = ident.get("nctId")
         title = ident.get("briefTitle", "NA")
 
         sponsor = sponsor_mod.get("leadSponsor", {}).get("name", "NA")
-
         conditions = ", ".join(
             protocol.get("conditionsModule", {}).get("conditions", [])
         )
-
-        # -------- DRUG EXTRACTION -------- #
+        
+        # -------- DRUGS -------- #
 
         interventions = protocol.get(
             "armsInterventionsModule", {}
@@ -255,28 +271,21 @@ if run_button:
             if i.get("type") == "DRUG"
         ])))
 
-        drug_text = ", ".join(drugs) if drugs else "its investigational therapy"
+        drug_text = ", ".join(drugs) if drugs else "NA"
 
-        # -------- CURRENT DATA -------- #
+        # -------- CURRENT VALUES -------- #
 
         current_status = status.get("overallStatus", "NA")
         current_phase = ", ".join(design.get("phases", [])) or "NA"
         current_enrollment = str(design.get("enrollmentInfo", {}).get("count", "NA"))
 
-        primary_completion = status.get(
-            "primaryCompletionDateStruct", {}
-        ).get("date", "NA")
+        primary_completion = status.get("primaryCompletionDateStruct", {}).get("date", "NA")
+        completion = status.get("completionDateStruct", {}).get("date", "NA")
 
-        completion = status.get(
-            "completionDateStruct", {}
-        ).get("date", "NA")
-
-        locations = protocol.get(
-            "contactsLocationsModule", {}
-        ).get("locations", [])
+        locations = protocol.get("contactsLocationsModule", {}).get("locations", [])
 
         current_countries = sorted(list(set([
-            loc.get("country") for loc in locations if loc.get("country")
+            l.get("country") for l in locations if l.get("country")
         ])))
 
         # -------- PREVIOUS DATA -------- #
@@ -300,10 +309,10 @@ if run_button:
             changes.append(f"Enrollment: {prev['enrollment']} → {current_enrollment}")
 
         if primary_completion != prev["primary_completion"]:
-            changes.append(f"Primary Completion Date: {prev['primary_completion']} → {primary_completion}")
+            changes.append(f"Primary Completion: {prev['primary_completion']} → {primary_completion}")
 
         if completion != prev["completion"]:
-            changes.append(f"Study Completion Date: {prev['completion']} → {completion}")
+            changes.append(f"Completion Date: {prev['completion']} → {completion}")
 
         added_countries = list(set(current_countries) - set(prev_countries))
         removed_countries = list(set(prev_countries) - set(current_countries))
@@ -319,23 +328,26 @@ if run_button:
         if added_drugs:
             changes.append("Drugs Added: " + ", ".join(added_drugs))
 
-        # -------- PHARMA STYLE OUTPUT -------- #
-
         if changes:
-
+        
+            disease = conditions if conditions else condition
+        
             phase_text = current_phase.replace("PHASE_", "Phase ")
-
-            update_sentence = (
-                f"{sponsor}'s {phase_text} trial evaluating {drug_text} "
-                f"in patients with {conditions if conditions else condition} "
-                f"has been updated. Changes: {'; '.join(changes)}."
+        
+            drug_sentence = drug_text if drug_text != "NA" else "its investigational therapy"
+        
+            update_text = (
+                f"{sponsor}'s {phase_text} trial evaluating {drug_sentence} "
+                f"in patients with {disease} has been updated. "
+                f"Changes: {'; '.join(changes)}."
             )
 
-            updates.append(update_sentence)
+    updates.append(update_text)
 
     conn.close()
 
-    st.success(f"Updates detected: {len(updates)}")
+    st.success(f"New Trials: {len(new_trials)}")
+    st.success(f"Updates: {len(updates)}")
 
     file_name = generate_pdf(
         condition,
