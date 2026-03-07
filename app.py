@@ -2,27 +2,24 @@ import streamlit as st
 import requests
 from datetime import datetime
 import psycopg2
+
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 from textwrap import wrap
-import os
-
-st.set_page_config(page_title="Clinical Trial Intelligence", layout="wide")
-
-st.title("Clinical Trial Intelligence Monitor")
 
 # -------- CONFIG -------- #
 
-AACT_HOST = "aact-db.ctti-clinicaltrials.org"
-AACT_DB = "aact"
-AACT_PORT = 5432
-AACT_USER = "theranode"
-AACT_PASS = "R@hul046"
+AACT_HOST = st.secrets["AACT_HOST"]
+AACT_DB = st.secrets["AACT_DB"]
+AACT_PORT = st.secrets["AACT_PORT"]
+AACT_USER = st.secrets["AACT_USER"]
+AACT_PASS = st.secrets["AACT_PASS"]
 
 
-# -------- DB CONNECTION -------- #
+# -------- HELPER FUNCTIONS -------- #
 
 def connect_aact():
+
     return psycopg2.connect(
         host=AACT_HOST,
         database=AACT_DB,
@@ -31,8 +28,6 @@ def connect_aact():
         port=AACT_PORT
     )
 
-
-# -------- PREVIOUS DATA -------- #
 
 def get_previous_trial_data(conn, nct_id):
 
@@ -84,36 +79,37 @@ BOTTOM = 60
 
 
 def add_footer(c):
-    c.setFont("Helvetica", 9)
+
+    c.setFont("Helvetica",9)
     page = c.getPageNumber()
-    c.drawCentredString(300, 30, f"Clinical Trial Intelligence Report | Page {page}")
+    c.drawCentredString(300,30,f"Clinical Trial Intelligence Report | Page {page}")
 
 
-def draw_wrapped_text(c, text, x, y, width=90, line_height=14):
+def draw_wrapped_text(c,text,x,y,width=90,line_height=14):
 
-    lines = wrap(text, width)
+    lines = wrap(text,width)
 
     for line in lines:
 
         if y < BOTTOM:
             add_footer(c)
             c.showPage()
-            c.setFont("Helvetica", 10)
+            c.setFont("Helvetica",10)
             y = TOP
 
-        c.drawString(x, y, line)
+        c.drawString(x,y,line)
         y -= line_height
 
     return y
 
 
-def draw_section_title(c, title, y, width):
+def draw_section_title(c,title,y,width):
 
-    c.setFont("Helvetica-Bold", 13)
-    c.drawString(50, y, title)
+    c.setFont("Helvetica-Bold",13)
+    c.drawString(50,y,title)
 
     y -= 8
-    c.line(50, y, width - 50, y)
+    c.line(50,y,width-50,y)
 
     y -= 20
 
@@ -122,57 +118,87 @@ def draw_section_title(c, title, y, width):
 
 # -------- PDF GENERATOR -------- #
 
-def generate_pdf(condition, start_date, end_date, new_trials, updates):
+def generate_pdf(condition,start_date,end_date,new_trials,updates):
 
-    safe_condition = condition.replace(" ", "_").lower()
-    file_name = f"clinical_trial_report_{safe_condition}.pdf"
+    safe_condition = condition.replace(" ","_").lower()
 
-    c = canvas.Canvas(file_name, pagesize=letter)
+    file_name = f"clinical_trial_report_{safe_condition}_{start_date}_{end_date}.pdf"
 
-    width, height = letter
+    c = canvas.Canvas(file_name,pagesize=letter)
+
+    width,height = letter
     y = height - 50
 
-    c.setFont("Helvetica-Bold", 16)
-    c.drawCentredString(width / 2, y, "CLINICAL TRIAL INTELLIGENCE REPORT")
-
-    y -= 30
-    c.setFont("Helvetica", 11)
-
-    c.drawString(50, y, f"Disease: {condition}")
-    y -= 15
-
-    c.drawString(50, y, f"Monitoring Window: {start_date} to {end_date}")
-    y -= 25
-
-    c.line(40, y, width - 40, y)
-    y -= 25
-
-    c.setFont("Helvetica-Bold", 12)
-    c.drawString(50, y, "SUMMARY")
-
-    y -= 20
-    c.setFont("Helvetica", 11)
-
-    c.drawString(60, y, f"Total New Trials: {len(new_trials)}")
-    y -= 15
-
-    c.drawString(60, y, f"Total Updated Trials: {len(updates)}")
+    c.setFont("Helvetica-Bold",16)
+    c.drawCentredString(width/2,y,"CLINICAL TRIAL INTELLIGENCE REPORT")
 
     y -= 30
 
-    y = draw_section_title(c, "NEW INDUSTRY TRIALS", y, width)
+    c.setFont("Helvetica",11)
+    c.drawString(50,y,f"Disease: {condition}")
 
-    c.setFont("Helvetica", 10)
+    y -= 15
+    c.drawString(50,y,f"Monitoring Window: {start_date} to {end_date}")
 
-    for trial in new_trials:
-        y = draw_wrapped_text(c, f"• {trial}", 60, y)
+    y -= 15
+    c.drawString(50,y,f"Generated on: {datetime.today().date()}")
+
+    y -= 25
+    c.line(40,y,width-40,y)
+
+    y -= 25
+
+    c.setFont("Helvetica-Bold",12)
+    c.drawString(50,y,"SUMMARY")
+
+    y -= 10
+    c.line(50,y,width-50,y)
 
     y -= 20
 
-    y = draw_section_title(c, "TRIAL UPDATES", y, width)
+    c.setFont("Helvetica",11)
+    c.drawString(60,y,f"Total New Trials: {len(new_trials)}")
 
-    for upd in updates:
-        y = draw_wrapped_text(c, f"• {upd}", 60, y)
+    y -= 15
+    c.drawString(60,y,f"Total Updated Trials: {len(updates)}")
+
+    y -= 30
+
+    y = draw_section_title(c,"NEW INDUSTRY TRIALS",y,width)
+
+    c.setFont("Helvetica",10)
+
+    if not new_trials:
+
+        y = draw_wrapped_text(c,"No new industry trials detected.",60,y)
+
+    else:
+
+        for trial in new_trials:
+
+            trial_text = f"• {trial}"
+            y = draw_wrapped_text(c,trial_text,60,y)
+
+            y -= 5
+
+    y -= 20
+
+    y = draw_section_title(c,"TRIAL UPDATES",y,width)
+
+    c.setFont("Helvetica",10)
+
+    if not updates:
+
+        y = draw_wrapped_text(c,"No trial updates detected.",60,y)
+
+    else:
+
+        for upd in updates:
+
+            upd_text = f"• {upd}"
+            y = draw_wrapped_text(c,upd_text,60,y)
+
+            y -= 5
 
     add_footer(c)
     c.save()
@@ -180,9 +206,25 @@ def generate_pdf(condition, start_date, end_date, new_trials, updates):
     return file_name
 
 
-# -------- MAIN ANALYSIS -------- #
+# -------- STREAMLIT UI -------- #
 
-def run_analysis(condition, start_date, end_date):
+st.title("Clinical Trial Intelligence Monitor")
+
+condition = st.text_input("Disease / Condition")
+
+start_date = st.date_input("Start Date")
+
+end_date = st.date_input("End Date")
+
+run_button = st.button("Run Analysis")
+
+
+if run_button:
+
+    st.write("Fetching trials...")
+
+    start_date_input = start_date.strftime("%Y-%m-%d")
+    end_date_input = end_date.strftime("%Y-%m-%d")
 
     base_url = "https://clinicaltrials.gov/api/v2/studies"
 
@@ -198,12 +240,11 @@ def run_analysis(condition, start_date, end_date):
     params = {
         "query.cond": condition,
         "fields": ",".join(fields),
-        "pageSize": 1000
+        "pageSize":1000
     }
 
-    response = requests.get(base_url, params=params)
-
-    studies = response.json().get("studies", [])
+    response = requests.get(base_url,params=params)
+    studies = response.json().get("studies",[])
 
     conn = connect_aact()
 
@@ -221,9 +262,9 @@ def run_analysis(condition, start_date, end_date):
         if not upd_date_str:
             continue
 
-        upd_date = datetime.strptime(upd_date_str, "%Y-%m-%d").date()
+        upd_date = datetime.strptime(upd_date_str, "%Y-%m-%d")
 
-        if not (start_date <= upd_date <= end_date):
+        if not (start_date <= upd_date.date() <= end_date):
             continue
 
         sponsor_class = sponsor_mod.get("leadSponsor", {}).get("class", "")
@@ -231,64 +272,87 @@ def run_analysis(condition, start_date, end_date):
         if sponsor_class.upper() != "INDUSTRY":
             continue
 
-        ident = protocol.get("identificationModule", {})
 
+        ident = protocol.get("identificationModule", {})
         nct_id = ident.get("nctId")
         title = ident.get("briefTitle", "")
+
         sponsor = sponsor_mod.get("leadSponsor", {}).get("name", "NA")
+
+        conditions = ", ".join(
+            protocol.get("conditionsModule", {}).get("conditions", [])
+        )
 
         prev = get_previous_trial_data(conn, nct_id)
 
         if not prev:
-            new_trials.append(f"[{nct_id}] {sponsor} started NEW trial: {title}")
+
+            new_trials.append(
+                f"[{nct_id}] {sponsor} started NEW trial: {title}"
+            )
+
+            continue
+
+
+        current_status = status.get("overallStatus", "NA")
+
+        current_phase = ", ".join(
+            protocol.get("designModule", {}).get("phases", [])
+        ) or "NA"
+
+        current_enrollment = str(
+            status.get("enrollmentStruct", {}).get("count", "NA")
+        )
+
+        locations = protocol.get("contactsLocationsModule", {}).get("locations", [])
+
+        current_countries = sorted(list(set([
+            loc.get("country") for loc in locations if loc.get("country")
+        ])))
+
+        prev_status = prev["status"]
+        prev_phase = prev["phase"]
+        prev_enrollment = prev["enrollment"]
+
+        prev_countries = get_previous_countries(conn, nct_id)
+
+        changes = []
+
+        if current_status != prev_status:
+            changes.append(f"Status: {prev_status} → {current_status}")
+
+        if current_phase != prev_phase:
+            changes.append(f"Phase: {prev_phase} → {current_phase}")
+
+        if current_enrollment != prev_enrollment:
+            changes.append(f"Enrollment: {prev_enrollment} → {current_enrollment}")
+
+        added_countries = list(set(current_countries) - set(prev_countries))
+
+        if added_countries:
+            changes.append(
+                "New Countries Added: " + ", ".join(added_countries)
+            )
+
+        if changes:
+
+            updates.append(
+                f"[{nct_id}] {sponsor} trial in {conditions}: "
+                + "; ".join(changes)
+            )
+
 
     conn.close()
 
-    return new_trials, updates
+    st.success(f"Total New Trials: {len(new_trials)}")
+    st.success(f"Total Updates: {len(updates)}")
 
+    file_name = generate_pdf(condition,start_date_input,end_date_input,new_trials,updates)
 
-# -------- STREAMLIT UI -------- #
+    with open(file_name,"rb") as f:
 
-condition = st.text_input("Disease / Condition")
-
-col1, col2 = st.columns(2)
-
-with col1:
-    start_date = st.date_input("Start Date")
-
-with col2:
-    end_date = st.date_input("End Date")
-
-if st.button("Run Clinical Trial Monitor"):
-
-    with st.spinner("Analyzing clinical trials..."):
-
-        new_trials, updates = run_analysis(
-            condition,
-            start_date,
-            end_date
+        st.download_button(
+            "Download PDF Report",
+            f,
+            file_name=file_name
         )
-
-        st.success("Analysis Complete")
-
-        st.write("### New Trials")
-        st.write(new_trials)
-
-        st.write("### Updates")
-        st.write(updates)
-
-        pdf_file = generate_pdf(
-            condition,
-            start_date,
-            end_date,
-            new_trials,
-            updates
-        )
-
-        with open(pdf_file, "rb") as f:
-            st.download_button(
-                label="Download PDF Report",
-                data=f,
-                file_name=pdf_file,
-                mime="application/pdf"
-            )
