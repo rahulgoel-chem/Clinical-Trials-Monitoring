@@ -287,17 +287,68 @@ if run_button:
 
         # -------- NEW TRIAL DETECTION -------- #
 
-        first_post_str = status.get("studyFirstPostDateStruct", {}).get("date")
+first_post_str = status.get("studyFirstPostDateStruct", {}).get("date")
 
-        if first_post_str:
+if first_post_str:
 
-            first_post_date = datetime.strptime(first_post_str, "%Y-%m-%d").date()
+    first_post_date = datetime.strptime(first_post_str, "%Y-%m-%d").date()
 
-            if start_date <= first_post_date <= end_date:
+    if start_date <= first_post_date <= end_date:
 
-                new_trials.append(
-                    f"[{nct_id}] {sponsor} started NEW trial: {title}"
-                )
+        design = protocol.get("designModule", {})
+
+        # Phase
+        phase = ", ".join(design.get("phases", [])) or "NA"
+
+        # Study Start Date
+        study_start = status.get("startDateStruct", {}).get("date", "NA")
+
+        # Primary Completion Date
+        primary_completion = status.get(
+            "primaryCompletionDateStruct", {}
+        ).get("date", "NA")
+
+        # Study Completion Date
+        study_completion = status.get(
+            "completionDateStruct", {}
+        ).get("date", "NA")
+
+        # Enrollment
+        enrollment = status.get(
+            "enrollmentStruct", {}
+        ).get("count", "NA")
+
+        # Countries
+        locations = protocol.get(
+            "contactsLocationsModule", {}
+        ).get("locations", [])
+
+        countries = sorted(list(set([
+            loc.get("country") for loc in locations if loc.get("country")
+        ])))
+
+        countries_text = ", ".join(countries) if countries else "NA"
+
+        # Trial Design Details
+        allocation = design.get("allocation", "NA")
+        intervention_model = design.get("interventionModel", "NA")
+        masking = design.get("maskingInfo", {}).get("masking", "NA")
+        purpose = design.get("primaryPurpose", "NA")
+
+        trial_design = f"{allocation}, {intervention_model}, {masking}, {purpose}"
+
+        trial_report = (
+            f"[{nct_id}] {sponsor} started NEW trial: {title} | "
+            f"Phase: {phase} | "
+            f"Start: {study_start} | "
+            f"Primary Completion: {primary_completion} | "
+            f"Study Completion: {study_completion} | "
+            f"Enrollment: {enrollment} | "
+            f"Countries: {countries_text} | "
+            f"Design: {trial_design}"
+        )
+
+        new_trials.append(trial_report)
 
         current_status = status.get("overallStatus", "NA")
 
