@@ -254,9 +254,9 @@ if run_button:
 
     for study in studies:
 
-    protocol = study.get("protocolSection", {})
-    status = protocol.get("statusModule", {})
-    sponsor_mod = protocol.get("sponsorCollaboratorsModule", {})
+        protocol = study.get("protocolSection", {})
+        status = protocol.get("statusModule", {})
+        sponsor_mod = protocol.get("sponsorCollaboratorsModule", {})
 
     upd_date_str = status.get("lastUpdatePostDateStruct", {}).get("date")
 
