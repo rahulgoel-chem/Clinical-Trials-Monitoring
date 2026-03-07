@@ -80,36 +80,36 @@ BOTTOM = 60
 
 def add_footer(c):
 
-    c.setFont("Helvetica",9)
+    c.setFont("Helvetica", 9)
     page = c.getPageNumber()
-    c.drawCentredString(300,30,f"Clinical Trial Intelligence Report | Page {page}")
+    c.drawCentredString(300, 30, f"Clinical Trial Intelligence Report | Page {page}")
 
 
-def draw_wrapped_text(c,text,x,y,width=90,line_height=14):
+def draw_wrapped_text(c, text, x, y, width=90, line_height=14):
 
-    lines = wrap(text,width)
+    lines = wrap(text, width)
 
     for line in lines:
 
         if y < BOTTOM:
             add_footer(c)
             c.showPage()
-            c.setFont("Helvetica",10)
+            c.setFont("Helvetica", 10)
             y = TOP
 
-        c.drawString(x,y,line)
+        c.drawString(x, y, line)
         y -= line_height
 
     return y
 
 
-def draw_section_title(c,title,y,width):
+def draw_section_title(c, title, y, width):
 
-    c.setFont("Helvetica-Bold",13)
-    c.drawString(50,y,title)
+    c.setFont("Helvetica-Bold", 13)
+    c.drawString(50, y, title)
 
     y -= 8
-    c.line(50,y,width-50,y)
+    c.line(50, y, width - 50, y)
 
     y -= 20
 
@@ -118,86 +118,84 @@ def draw_section_title(c,title,y,width):
 
 # -------- PDF GENERATOR -------- #
 
-def generate_pdf(condition,start_date,end_date,new_trials,updates):
+def generate_pdf(condition, start_date, end_date, new_trials, updates):
 
-    safe_condition = condition.replace(" ","_").lower()
+    safe_condition = condition.replace(" ", "_").lower()
 
     file_name = f"clinical_trial_report_{safe_condition}_{start_date}_{end_date}.pdf"
 
-    c = canvas.Canvas(file_name,pagesize=letter)
+    c = canvas.Canvas(file_name, pagesize=letter)
 
-    width,height = letter
+    width, height = letter
     y = height - 50
 
-    c.setFont("Helvetica-Bold",16)
-    c.drawCentredString(width/2,y,"CLINICAL TRIAL INTELLIGENCE REPORT")
+    c.setFont("Helvetica-Bold", 16)
+    c.drawCentredString(width / 2, y, "CLINICAL TRIAL INTELLIGENCE REPORT")
 
     y -= 30
 
-    c.setFont("Helvetica",11)
-    c.drawString(50,y,f"Disease: {condition}")
+    c.setFont("Helvetica", 11)
+    c.drawString(50, y, f"Disease: {condition}")
 
     y -= 15
-    c.drawString(50,y,f"Monitoring Window: {start_date} to {end_date}")
+    c.drawString(50, y, f"Monitoring Window: {start_date} to {end_date}")
 
     y -= 15
-    c.drawString(50,y,f"Generated on: {datetime.today().date()}")
+    c.drawString(50, y, f"Generated on: {datetime.today().date()}")
 
     y -= 25
-    c.line(40,y,width-40,y)
+    c.line(40, y, width - 40, y)
 
     y -= 25
 
-    c.setFont("Helvetica-Bold",12)
-    c.drawString(50,y,"SUMMARY")
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(50, y, "SUMMARY")
 
     y -= 10
-    c.line(50,y,width-50,y)
+    c.line(50, y, width - 50, y)
 
     y -= 20
 
-    c.setFont("Helvetica",11)
-    c.drawString(60,y,f"Total New Trials: {len(new_trials)}")
+    c.setFont("Helvetica", 11)
+    c.drawString(60, y, f"Total New Trials: {len(new_trials)}")
 
     y -= 15
-    c.drawString(60,y,f"Total Updated Trials: {len(updates)}")
+    c.drawString(60, y, f"Total Updated Trials: {len(updates)}")
 
     y -= 30
 
-    y = draw_section_title(c,"NEW INDUSTRY TRIALS",y,width)
+    y = draw_section_title(c, "NEW INDUSTRY TRIALS", y, width)
 
-    c.setFont("Helvetica",10)
+    c.setFont("Helvetica", 10)
 
     if not new_trials:
 
-        y = draw_wrapped_text(c,"No new industry trials detected.",60,y)
+        y = draw_wrapped_text(c, "No new industry trials detected.", 60, y)
 
     else:
 
         for trial in new_trials:
 
             trial_text = f"• {trial}"
-            y = draw_wrapped_text(c,trial_text,60,y)
-
+            y = draw_wrapped_text(c, trial_text, 60, y)
             y -= 5
 
     y -= 20
 
-    y = draw_section_title(c,"TRIAL UPDATES",y,width)
+    y = draw_section_title(c, "TRIAL UPDATES", y, width)
 
-    c.setFont("Helvetica",10)
+    c.setFont("Helvetica", 10)
 
     if not updates:
 
-        y = draw_wrapped_text(c,"No trial updates detected.",60,y)
+        y = draw_wrapped_text(c, "No trial updates detected.", 60, y)
 
     else:
 
         for upd in updates:
 
             upd_text = f"• {upd}"
-            y = draw_wrapped_text(c,upd_text,60,y)
-
+            y = draw_wrapped_text(c, upd_text, 60, y)
             y -= 5
 
     add_footer(c)
@@ -234,17 +232,18 @@ if run_button:
         "protocolSection.designModule",
         "protocolSection.sponsorCollaboratorsModule",
         "protocolSection.contactsLocationsModule",
-        "protocolSection.conditionsModule"
+        "protocolSection.conditionsModule",
+        "protocolSection.armsInterventionsModule"
     ]
 
     params = {
         "query.cond": condition,
         "fields": ",".join(fields),
-        "pageSize":1000
+        "pageSize": 1000
     }
 
-    response = requests.get(base_url,params=params)
-    studies = response.json().get("studies",[])
+    response = requests.get(base_url, params=params)
+    studies = response.json().get("studies", [])
 
     conn = connect_aact()
 
@@ -272,7 +271,6 @@ if run_button:
         if sponsor_class.upper() != "INDUSTRY":
             continue
 
-
         ident = protocol.get("identificationModule", {})
         nct_id = ident.get("nctId")
         title = ident.get("briefTitle", "")
@@ -287,12 +285,54 @@ if run_button:
 
         if not prev:
 
+            start_date_trial = status.get("startDateStruct", {}).get("date", "NA")
+            primary_completion = status.get("primaryCompletionDateStruct", {}).get("date", "NA")
+            completion_date = status.get("completionDateStruct", {}).get("date", "NA")
+
+            enrollment = str(
+                status.get("enrollmentStruct", {}).get("count", "NA")
+            )
+
+            arms_module = protocol.get("armsInterventionsModule", {})
+            arms_list = arms_module.get("armGroups", [])
+
+            arms = ", ".join(
+                [arm.get("label", "Arm") for arm in arms_list]
+            ) if arms_list else "NA"
+
+            locations = protocol.get("contactsLocationsModule", {}).get("locations", [])
+
+            countries = sorted(list(set([
+                loc.get("country") for loc in locations if loc.get("country")
+            ])))
+
+            countries_str = ", ".join(countries) if countries else "NA"
+
+            design_module = protocol.get("designModule", {})
+
+            study_type = design_module.get("studyType", "NA")
+
+            allocation = design_module.get("designInfo", {}).get("allocation", "NA")
+
+            intervention_model = design_module.get("designInfo", {}).get("interventionModel", "NA")
+
+            masking = design_module.get("designInfo", {}).get("maskingInfo", {}).get("masking", "NA")
+
+            trial_design = f"{study_type}; {allocation}; {intervention_model}; Masking: {masking}"
+
             new_trials.append(
-                f"[{nct_id}] {sponsor} started NEW trial: {title}"
+
+                f"[{nct_id}] {sponsor} started NEW trial: {title}. "
+                f"Start Date: {start_date_trial}; "
+                f"Primary Completion: {primary_completion}; "
+                f"Study Completion: {completion_date}; "
+                f"Enrollment: {enrollment}; "
+                f"Arms: {arms}; "
+                f"Countries: {countries_str}; "
+                f"Design: {trial_design}"
             )
 
             continue
-
 
         current_status = status.get("overallStatus", "NA")
 
@@ -341,15 +381,14 @@ if run_button:
                 + "; ".join(changes)
             )
 
-
     conn.close()
 
     st.success(f"Total New Trials: {len(new_trials)}")
     st.success(f"Total Updates: {len(updates)}")
 
-    file_name = generate_pdf(condition,start_date_input,end_date_input,new_trials,updates)
+    file_name = generate_pdf(condition, start_date_input, end_date_input, new_trials, updates)
 
-    with open(file_name,"rb") as f:
+    with open(file_name, "rb") as f:
 
         st.download_button(
             "Download PDF Report",
