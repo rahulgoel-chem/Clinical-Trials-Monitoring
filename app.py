@@ -34,7 +34,7 @@ def get_previous_trial_data(conn, nct_id):
     cur = conn.cursor()
 
     query = """
-    SELECT overall_status, phase, enrollment
+    SELECT overall_status, start_date, primary_completion_date, completion_date, enrollment
     FROM studies
     WHERE nct_id = %s
     """
@@ -46,8 +46,10 @@ def get_previous_trial_data(conn, nct_id):
     if row:
         return {
             "status": str(row[0]) if row[0] else "NA",
-            "phase": str(row[1]) if row[1] else "NA",
-            "enrollment": str(row[2]) if row[2] else "NA"
+            "study_start": str(row[1]) if row[1] else "NA",
+            "primary_completion": str(row[2]) if row[2] else "NA",
+            "study_completion": str(row[3]) if row[3] else "NA",
+            "enrollment": str(row[4]) if row[4] else "NA"
         }
 
     return None
@@ -68,6 +70,14 @@ def get_previous_countries(conn, nct_id):
     cur.close()
 
     return sorted([r[0] for r in rows if r[0]])
+
+
+def get_intervention_names(protocol):
+    interventions = protocol.get("armsInterventionsModule", {}).get("interventions", [])
+    names = sorted(list(set([
+        item.get("name") for item in interventions if item.get("name")
+    ])))
+    return ", ".join(names) if names else "NA"
 
 
 # -------- PDF UTILITIES -------- #
@@ -223,7 +233,8 @@ if run_button:
         "protocolSection.designModule",
         "protocolSection.sponsorCollaboratorsModule",
         "protocolSection.contactsLocationsModule",
-        "protocolSection.conditionsModule"
+        "protocolSection.conditionsModule",
+        "protocolSection.armsInterventionsModule"
     ]
 
     params = {
@@ -283,6 +294,7 @@ if run_button:
         title = ident.get("briefTitle", "")
 
         sponsor = sponsor_mod.get("leadSponsor", {}).get("name", "NA")
+        interventions = get_intervention_names(protocol)
 
         conditions = ", ".join(
             protocol.get("conditionsModule", {}).get("conditions", [])
@@ -326,6 +338,7 @@ if run_button:
 
                 trial_report = (
                     f"[{nct_id}] {sponsor} started NEW trial: {title} | "
+                    f"Intervention(s): {interventions} | "
                     f"Phase: {phase} | "
                     f"Start: {study_start} | "
                     f"Primary Completion: {primary_completion} | "
@@ -341,10 +354,13 @@ if run_button:
         # -------- UPDATE DETECTION -------- #
 
         current_status = status.get("overallStatus", "NA")
-
-        current_phase = ", ".join(
-            design.get("phases", [])
-        ) or "NA"
+        current_study_start = status.get("startDateStruct", {}).get("date", "NA")
+        current_primary_completion = status.get(
+            "primaryCompletionDateStruct", {}
+        ).get("date", "NA")
+        current_study_completion = status.get(
+            "completionDateStruct", {}
+        ).get("date", "NA")
 
         current_enrollment = str(
             design.get("enrollmentInfo", {}).get("count", "NA")
@@ -362,7 +378,9 @@ if run_button:
             continue
 
         prev_status = prev["status"]
-        prev_phase = prev["phase"]
+        prev_study_start = prev["study_start"]
+        prev_primary_completion = prev["primary_completion"]
+        prev_study_completion = prev["study_completion"]
         prev_enrollment = prev["enrollment"]
 
         prev_countries = get_previous_countries(conn, nct_id)
@@ -372,21 +390,37 @@ if run_button:
         if current_status != prev_status:
             changes.append(f"Status: {prev_status} → {current_status}")
 
-        if current_phase != prev_phase:
-            changes.append(f"Phase: {prev_phase} → {current_phase}")
+        if current_study_start != prev_study_start:
+            changes.append(f"Study Start Date: {prev_study_start} → {current_study_start}")
+
+        if current_primary_completion != prev_primary_completion:
+            changes.append(
+                f"Primary Completion Date: {prev_primary_completion} → {current_primary_completion}"
+            )
+
+        if current_study_completion != prev_study_completion:
+            changes.append(
+                f"Study Completion Date: {prev_study_completion} → {current_study_completion}"
+            )
 
         if current_enrollment != prev_enrollment:
             changes.append(f"Enrollment: {prev_enrollment} → {current_enrollment}")
 
-        added_countries = list(set(current_countries) - set(prev_countries))
+        added_countries = sorted(list(set(current_countries) - set(prev_countries)))
+        removed_countries = sorted(list(set(prev_countries) - set(current_countries)))
 
         if added_countries:
             changes.append("New Countries Added: " + ", ".join(added_countries))
 
+        if removed_countries:
+            changes.append("Countries Removed: " + ", ".join(removed_countries))
+
         if changes:
 
             updates.append(
-                f"[{nct_id}] {sponsor} trial in {conditions}: "
+                f"[{nct_id}] {sponsor} updated trial: {title} | "
+                f"Intervention(s): {interventions} | "
+                f"Condition(s): {conditions}: "
                 + "; ".join(changes)
             )
 
