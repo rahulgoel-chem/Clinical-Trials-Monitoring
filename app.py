@@ -24,11 +24,10 @@ def connect_aact():
         port=AACT_PORT
     )
 
-@st.cache_data(ttl=3600)  # Cache DB queries for 1hr
 def get_previous_trial_data(conn, nct_id):
     cur = conn.cursor()
-    
-    # ✅ FIXED: Query ALL relevant fields from studies table [web:30]
+   
+   
     query = """
     SELECT overall_status, phase, enrollment, 
            start_date, primary_completion_date, completion_date
@@ -42,7 +41,6 @@ def get_previous_trial_data(conn, nct_id):
     if row:
         return {
             "status": str(row[0]) if row[0] else "NA",
-            "phase": str(row[1]) if row[1] else "NA", 
             "enrollment": str(row[2]) if row[2] else "NA",
             "start_date": str(row[3]) if row[3] else "NA",
             "primary_completion": str(row[4]) if row[4] else "NA",
@@ -50,11 +48,10 @@ def get_previous_trial_data(conn, nct_id):
         }
     return None
 
-@st.cache_data(ttl=3600)
 def get_previous_countries(conn, nct_id):
     cur = conn.cursor()
     
-    # ✅ FIXED: Use COUNTRIES table (not facilities) for accurate historical countries [web:31][web:34]
+   
     query = """
     SELECT DISTINCT country
     FROM countries 
