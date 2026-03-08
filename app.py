@@ -1,6 +1,6 @@
 import streamlit as st
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta  # ✅ FIXED: Added timedelta import
 import psycopg2
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
@@ -14,7 +14,6 @@ AACT_USER = st.secrets["AACT_USER"]
 AACT_PASS = st.secrets["AACT_PASS"]
 
 # -------- HELPER FUNCTIONS -------- #
-
 def connect_aact():
     return psycopg2.connect(
         host=AACT_HOST,
@@ -24,10 +23,9 @@ def connect_aact():
         port=AACT_PORT
     )
 
+@st.cache_data(ttl=3600)
 def get_previous_trial_data(conn, nct_id):
     cur = conn.cursor()
-   
-   
     query = """
     SELECT overall_status, phase, enrollment, 
            start_date, primary_completion_date, completion_date
@@ -41,6 +39,7 @@ def get_previous_trial_data(conn, nct_id):
     if row:
         return {
             "status": str(row[0]) if row[0] else "NA",
+            "phase": str(row[1]) if row[1] else "NA", 
             "enrollment": str(row[2]) if row[2] else "NA",
             "start_date": str(row[3]) if row[3] else "NA",
             "primary_completion": str(row[4]) if row[4] else "NA",
@@ -48,10 +47,9 @@ def get_previous_trial_data(conn, nct_id):
         }
     return None
 
+@st.cache_data(ttl=3600)
 def get_previous_countries(conn, nct_id):
     cur = conn.cursor()
-    
-   
     query = """
     SELECT DISTINCT country
     FROM countries 
@@ -63,7 +61,7 @@ def get_previous_countries(conn, nct_id):
     cur.close()
     return [r[0] for r in rows if r[0]]
 
-# -------- PDF UTILITIES (UNCHANGED) -------- #
+# -------- PDF UTILITIES -------- #
 LEFT = 60
 RIGHT = 550
 TOP = 750
@@ -94,7 +92,7 @@ def draw_section_title(c, title, y, width):
     y -= 20
     return y
 
-# -------- PDF GENERATOR (ENHANCED SUMMARY) -------- #
+# -------- PDF GENERATOR -------- #
 def generate_pdf(condition, start_date, end_date, new_trials, updates):
     safe_condition = condition.replace(" ", "_").lower()
     file_name = f"clinical_trial_report_{safe_condition}_{start_date}_{end_date}.pdf"
@@ -103,7 +101,6 @@ def generate_pdf(condition, start_date, end_date, new_trials, updates):
     width, height = letter
     y = height - 50
 
-    # Title & Header
     c.setFont("Helvetica-Bold", 16)
     c.drawCentredString(width / 2, y, "CLINICAL TRIAL INTELLIGENCE REPORT")
     y -= 30
@@ -117,7 +114,6 @@ def generate_pdf(condition, start_date, end_date, new_trials, updates):
     c.line(40, y, width - 40, y)
     y -= 25
 
-    # Summary
     c.setFont("Helvetica-Bold", 12)
     c.drawString(50, y, "SUMMARY")
     y -= 10
@@ -129,7 +125,6 @@ def generate_pdf(condition, start_date, end_date, new_trials, updates):
     c.drawString(60, y, f"Updates: {len(updates)}")
     y -= 30
 
-    # New Trials Section
     y = draw_section_title(c, "NEW INDUSTRY TRIALS", y, width)
     c.setFont("Helvetica", 10)
     if not new_trials:
@@ -140,7 +135,6 @@ def generate_pdf(condition, start_date, end_date, new_trials, updates):
             y -= 5
     y -= 20
 
-    # Updates Section
     y = draw_section_title(c, "TRIAL UPDATES", y, width)
     c.setFont("Helvetica", 10)
     if not updates:
@@ -154,13 +148,16 @@ def generate_pdf(condition, start_date, end_date, new_trials, updates):
     c.save()
     return file_name
 
-# -------- STREAMLIT UI & LOGIC (IMPROVED CHANGE DETECTION) -------- #
+# -------- STREAMLIT UI (FIXED) -------- #
 st.title("🔬 Clinical Trial Intelligence Monitor")
 
 condition = st.text_input("Disease / Condition", value="lung cancer")
+
 col1, col2 = st.columns(2)
-start_date = col1.date_input("Start Date", value=datetime.now().date() - timedelta(days=30))
-end_date = col2.date_input("End Date", value=datetime.now().date())
+# ✅ FIXED: Import timedelta + use datetime.now()
+today = datetime.now().date()
+start_date = col1.date_input("Start Date", value=today - timedelta(days=30))
+end_date = col2.date_input("End Date", value=today)
 
 run_button = st.button("🚀 Run Analysis", type="primary")
 
@@ -169,7 +166,6 @@ if run_button:
         start_date_str = start_date.strftime("%Y-%m-%d")
         end_date_str = end_date.strftime("%Y-%m-%d")
 
-        # Fetch studies (unchanged pagination)
         base_url = "https://clinicaltrials.gov/api/v2/studies"
         fields = [
             "protocolSection.identificationModule",
@@ -195,7 +191,6 @@ if run_button:
 
     st.success(f"📊 Found {len(studies)} total studies. Analyzing changes...")
 
-    # ✅ MAIN IMPROVEMENT: Connect AACT & detect ALL changes
     conn = connect_aact()
     new_trials = []
     updates = []
@@ -220,7 +215,6 @@ if run_button:
         if not (start_date <= upd_date <= end_date):
             continue
 
-        # Industry only
         sponsor_class = sponsor_mod.get("leadSponsor", {}).get("class", "").upper()
         if sponsor_class != "INDUSTRY":
             continue
@@ -229,7 +223,7 @@ if run_button:
         title = ident.get("briefTitle", "")[:100]
         conditions = ", ".join(protocol.get("conditionsModule", {}).get("conditions", [])[:3])
 
-        # NEW TRIAL: First post in window (unchanged, works well)
+        # NEW TRIAL DETECTION
         first_post_str = status_mod.get("studyFirstPostDateStruct", {}).get("date")
         if first_post_str:
             first_post_date = datetime.strptime(first_post_str, "%Y-%m-%d").date()
@@ -249,16 +243,16 @@ if run_button:
                     f"Start: {start_date_study} | Prim Comp: {prim_comp} | "
                     f"Comp: {comp_date} | Enroll: {enrollment} | Countries: {countries_text}"
                 )
-                continue  # Skip updates for new trials
+                continue
 
-        # UPDATE DETECTION: Compare ALL fields with AACT historical data [web:30]
+        # UPDATE DETECTION
         prev_data = get_previous_trial_data(conn, nct_id)
         if not prev_data:
-            continue  # No previous record
+            continue
 
         prev_countries = get_previous_countries(conn, nct_id)
 
-        # ✅ CURRENT VALUES (normalized)
+        # Current values
         curr_status = status_mod.get("overallStatus", "NA")
         curr_phase = ", ".join(design_mod.get("phases", [])) or "NA"
         curr_enroll = str(status_mod.get("enrollmentInfo", {}).get("count", "NA"))
@@ -299,12 +293,11 @@ if run_button:
 
     conn.close()
 
-    # Results
     st.success(f"✅ New Trials: {len(new_trials)} | Updates: {len(updates)}")
     
     if new_trials:
         st.subheader("New Trials")
-        for trial in new_trials[:10]:  # Preview top 10
+        for trial in new_trials[:10]:
             st.write(trial)
     
     if updates:
@@ -312,7 +305,6 @@ if run_button:
         for upd in updates[:10]:
             st.write(f"🔄 {upd}")
 
-    # Generate & download PDF
     pdf_file = generate_pdf(condition, start_date_str, end_date_str, new_trials, updates)
     with open(pdf_file, "rb") as f:
         st.download_button(
