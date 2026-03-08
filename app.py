@@ -27,6 +27,14 @@ def connect_aact():
     )
 
 
+def normalize_date(d):
+    if not d or d == "NA":
+        return "NA"
+    if len(d) == 7:
+        return d + "-01"
+    return d
+
+
 def get_previous_trial_data(conn, nct_id):
 
     cur = conn.cursor()
@@ -69,6 +77,21 @@ def get_previous_countries(conn,nct_id):
     cur.close()
 
     return sorted([r[0] for r in rows if r[0]])
+
+
+def get_current_countries(protocol):
+
+    countries = set()
+
+    locations = protocol.get("contactsLocationsModule",{}).get("locations",[])
+
+    for loc in locations:
+        c = loc.get("country")
+        if c:
+            countries.add(c)
+
+    return sorted(list(countries))
+
 
 # -------- PDF UTILITIES -------- #
 
@@ -154,13 +177,9 @@ def generate_pdf(condition,start_date,end_date,new_trials,updates):
     c.setFont("Helvetica",10)
 
     if not new_trials:
-
         y = draw_wrapped_text(c,"No new trials detected.",60,y)
-
     else:
-
         for t in new_trials:
-
             y = draw_wrapped_text(c,f"• {t}",60,y)
             y -= 5
 
@@ -169,13 +188,9 @@ def generate_pdf(condition,start_date,end_date,new_trials,updates):
     y = draw_section_title(c,"TRIAL UPDATES",y,width)
 
     if not updates:
-
         y = draw_wrapped_text(c,"No trial updates detected.",60,y)
-
     else:
-
         for u in updates:
-
             y = draw_wrapped_text(c,f"• {u}",60,y)
             y -= 5
 
@@ -281,22 +296,18 @@ if run_button:
         if update_post_str:
             update_post_date = datetime.strptime(update_post_str,"%Y-%m-%d").date()
 
-        if not (
-            (first_post_date and start_date <= first_post_date <= end_date)
-            or
-            (update_post_date and start_date <= update_post_date <= end_date)
-        ):
-            continue
-
-        # -------- NEW TRIAL DETECTION -------- #
+        # -------- NEW TRIAL -------- #
 
         if first_post_date and start_date <= first_post_date <= end_date:
 
             new_trials.append(
-                f"[{nct_id}] {sponsor} started NEW {phase} trial: {title}"
+                f"[{nct_id}] {sponsor}'s {phase} trial evaluating {title} has been registered."
             )
 
-        # -------- UPDATE DETECTION -------- #
+        # -------- UPDATE FILTER -------- #
+
+        if not (update_post_date and start_date <= update_post_date <= end_date):
+            continue
 
         prev = get_previous_trial_data(conn,nct_id)
 
@@ -312,27 +323,29 @@ if run_button:
                 f"Status updated from {prev['status']} to {current_status}"
             )
 
-        study_start = status.get("startDateStruct",{}).get("date","NA")
+        study_start = normalize_date(
+            status.get("startDateStruct",{}).get("date","NA")
+        )
 
-        if study_start != prev["start"]:
+        if study_start != normalize_date(prev["start"]):
             changes.append(
                 f"Study start date updated from {prev['start']} to {study_start}"
             )
 
-        primary_completion = status.get(
-            "primaryCompletionDateStruct",{}
-        ).get("date","NA")
+        primary_completion = normalize_date(
+            status.get("primaryCompletionDateStruct",{}).get("date","NA")
+        )
 
-        if primary_completion != prev["primary_completion"]:
+        if primary_completion != normalize_date(prev["primary_completion"]):
             changes.append(
                 f"Primary Completion date updated from {prev['primary_completion']} to {primary_completion}"
             )
 
-        study_completion = status.get(
-            "completionDateStruct",{}
-        ).get("date","NA")
+        study_completion = normalize_date(
+            status.get("completionDateStruct",{}).get("date","NA")
+        )
 
-        if study_completion != prev["completion"]:
+        if study_completion != normalize_date(prev["completion"]):
             changes.append(
                 f"Study Completion date updated from {prev['completion']} to {study_completion}"
             )
@@ -346,9 +359,22 @@ if run_button:
                 f"Enrollment updated from {prev['enrollment']} to {enrollment}"
             )
 
+        # -------- LOCATION CHANGES -------- #
+
+        prev_countries = get_previous_countries(conn,nct_id)
+
+        curr_countries = get_current_countries(protocol)
+
+        added = list(set(curr_countries) - set(prev_countries))
+
+        if added:
+            changes.append(
+                "locations added " + ", ".join(sorted(added))
+            )
+
         if changes:
 
-            report = f"[{nct_id}] {sponsor}'s {phase} trial '{title}' has been updated.\n"
+            report = f"[{nct_id}] {sponsor}'s {phase} trial evaluating {title} has been updated.\n"
 
             for c in changes:
                 report += c + " |\n"
