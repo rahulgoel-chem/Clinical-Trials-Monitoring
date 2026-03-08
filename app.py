@@ -1,6 +1,6 @@
 import streamlit as st
 import requests
-from datetime import datetime, timedelta  # ✅ FIXED: Added timedelta import
+from datetime import datetime, timedelta, date
 import psycopg2
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
@@ -23,11 +23,10 @@ def connect_aact():
         port=AACT_PORT
     )
 
-@st.cache_data(ttl=3600)
 def get_previous_trial_data(conn, nct_id):
     cur = conn.cursor()
     query = """
-    SELECT overall_status, phase, enrollment, 
+    SELECT overall_status, enrollment, 
            start_date, primary_completion_date, completion_date
     FROM studies 
     WHERE nct_id = %s
@@ -39,15 +38,13 @@ def get_previous_trial_data(conn, nct_id):
     if row:
         return {
             "status": str(row[0]) if row[0] else "NA",
-            "phase": str(row[1]) if row[1] else "NA", 
-            "enrollment": str(row[2]) if row[2] else "NA",
-            "start_date": str(row[3]) if row[3] else "NA",
-            "primary_completion": str(row[4]) if row[4] else "NA",
-            "completion_date": str(row[5]) if row[5] else "NA"
+            "enrollment": str(row[1]) if row[1] else "NA",
+            "start_date": str(row[2]) if row[2] else "NA",
+            "primary_completion": str(row[3]) if row[3] else "NA",
+            "completion_date": str(row[4]) if row[4] else "NA"
         }
     return None
 
-@st.cache_data(ttl=3600)
 def get_previous_countries(conn, nct_id):
     cur = conn.cursor()
     query = """
@@ -148,14 +145,13 @@ def generate_pdf(condition, start_date, end_date, new_trials, updates):
     c.save()
     return file_name
 
-# -------- STREAMLIT UI (FIXED) -------- #
+# -------- STREAMLIT UI -------- #
 st.title("🔬 Clinical Trial Intelligence Monitor")
 
 condition = st.text_input("Disease / Condition", value="lung cancer")
 
 col1, col2 = st.columns(2)
-# ✅ FIXED: Import timedelta + use datetime.now()
-today = datetime.now().date()
+today = date.today()
 start_date = col1.date_input("Start Date", value=today - timedelta(days=30))
 end_date = col2.date_input("End Date", value=today)
 
@@ -191,125 +187,131 @@ if run_button:
 
     st.success(f"📊 Found {len(studies)} total studies. Analyzing changes...")
 
-    conn = connect_aact()
-    new_trials = []
-    updates = []
-    seen_nct_ids = set()
+    try:
+        conn = connect_aact()
+        new_trials = []
+        updates = []
+        seen_nct_ids = set()
 
-    for study in studies:
-        protocol = study.get("protocolSection", {})
-        status_mod = protocol.get("statusModule", {})
-        sponsor_mod = protocol.get("sponsorCollaboratorsModule", {})
-        design_mod = protocol.get("designModule", {})
-        ident = protocol.get("identificationModule", {})
+        for study in studies:
+            protocol = study.get("protocolSection", {})
+            status_mod = protocol.get("statusModule", {})
+            sponsor_mod = protocol.get("sponsorCollaboratorsModule", {})
+            design_mod = protocol.get("designModule", {})
+            ident = protocol.get("identificationModule", {})
 
-        nct_id = ident.get("nctId")
-        if not nct_id or nct_id in seen_nct_ids:
-            continue
-        seen_nct_ids.add(nct_id)
+            nct_id = ident.get("nctId")
+            if not nct_id or nct_id in seen_nct_ids:
+                continue
+            seen_nct_ids.add(nct_id)
 
-        upd_date_str = status_mod.get("lastUpdatePostDateStruct", {}).get("date")
-        if not upd_date_str:
-            continue
-        upd_date = datetime.strptime(upd_date_str, "%Y-%m-%d").date()
-        if not (start_date <= upd_date <= end_date):
-            continue
-
-        sponsor_class = sponsor_mod.get("leadSponsor", {}).get("class", "").upper()
-        if sponsor_class != "INDUSTRY":
-            continue
-
-        sponsor = sponsor_mod.get("leadSponsor", {}).get("name", "Unknown")
-        title = ident.get("briefTitle", "")[:100]
-        conditions = ", ".join(protocol.get("conditionsModule", {}).get("conditions", [])[:3])
-
-        # NEW TRIAL DETECTION
-        first_post_str = status_mod.get("studyFirstPostDateStruct", {}).get("date")
-        if first_post_str:
-            first_post_date = datetime.strptime(first_post_str, "%Y-%m-%d").date()
-            if start_date <= first_post_date <= end_date:
-                phase_str = ", ".join(design_mod.get("phases", [])) or "NA"
-                start_date_study = status_mod.get("startDateStruct", {}).get("date", "NA")
-                prim_comp = status_mod.get("primaryCompletionDateStruct", {}).get("date", "NA")
-                comp_date = status_mod.get("completionDateStruct", {}).get("date", "NA")
-                enrollment = status_mod.get("enrollmentInfo", {}).get("count", "NA")
-                
-                locations = protocol.get("contactsLocationsModule", {}).get("locations", [])
-                countries = sorted(set(loc.get("country") for loc in locations if loc.get("country")))
-                countries_text = ", ".join(countries) or "NA"
-                
-                new_trials.append(
-                    f"{nct_id} | {sponsor} | {title} | Phase: {phase_str} | "
-                    f"Start: {start_date_study} | Prim Comp: {prim_comp} | "
-                    f"Comp: {comp_date} | Enroll: {enrollment} | Countries: {countries_text}"
-                )
+            upd_date_str = status_mod.get("lastUpdatePostDateStruct", {}).get("date")
+            if not upd_date_str:
+                continue
+            upd_date = datetime.strptime(upd_date_str, "%Y-%m-%d").date()
+            if not (start_date <= upd_date <= end_date):
                 continue
 
-        # UPDATE DETECTION
-        prev_data = get_previous_trial_data(conn, nct_id)
-        if not prev_data:
-            continue
+            sponsor_class = sponsor_mod.get("leadSponsor", {}).get("class", "").upper()
+            if sponsor_class != "INDUSTRY":
+                continue
 
-        prev_countries = get_previous_countries(conn, nct_id)
+            sponsor = sponsor_mod.get("leadSponsor", {}).get("name", "Unknown")
+            title = ident.get("briefTitle", "")[:100]
+            conditions = ", ".join(protocol.get("conditionsModule", {}).get("conditions", [])[:3])
+            intervention = ident.get("briefTitle", "").split("in patients with")[-2].split("using")[-1].strip() if "in patients with" in ident.get("briefTitle", "") else "intervention"
+            
+            phase_str = ", ".join(design_mod.get("phases", [])) or "NA"
 
-        # Current values
-        curr_status = status_mod.get("overallStatus", "NA")
-        curr_phase = ", ".join(design_mod.get("phases", [])) or "NA"
-        curr_enroll = str(status_mod.get("enrollmentInfo", {}).get("count", "NA"))
-        curr_start = status_mod.get("startDateStruct", {}).get("date", "NA")
-        curr_prim_comp = status_mod.get("primaryCompletionDateStruct", {}).get("date", "NA")
-        curr_comp = status_mod.get("completionDateStruct", {}).get("date", "NA")
+            # NEW TRIAL DETECTION
+            first_post_str = status_mod.get("studyFirstPostDateStruct", {}).get("date")
+            if first_post_str:
+                first_post_date = datetime.strptime(first_post_str, "%Y-%m-%d").date()
+                if start_date <= first_post_date <= end_date:
+                    start_date_study = status_mod.get("startDateStruct", {}).get("date", "NA")
+                    prim_comp = status_mod.get("primaryCompletionDateStruct", {}).get("date", "NA")
+                    comp_date = status_mod.get("completionDateStruct", {}).get("date", "NA")
+                    enrollment = status_mod.get("enrollmentInfo", {}).get("count", "NA")
+                    
+                    locations = protocol.get("contactsLocationsModule", {}).get("locations", [])
+                    countries = sorted(set(loc.get("country") for loc in locations if loc.get("country")))
+                    countries_text = ", ".join(countries) or "NA"
+                    
+                    new_trials.append(
+                        f"{nct_id} | {sponsor} | {title} | Phase: {phase_str} | "
+                        f"Start: {start_date_study} | Prim Comp: {prim_comp} | "
+                        f"Comp: {comp_date} | Enroll: {enrollment} | Countries: {countries_text}"
+                    )
+                    continue
 
-        curr_locations = protocol.get("contactsLocationsModule", {}).get("locations", [])
-        curr_countries_list = sorted(set(loc.get("country") for loc in curr_locations if loc.get("country")))
-        curr_countries_str = ", ".join(curr_countries_list)
+            # UPDATE DETECTION - NEW FORMAT ✅
+            prev_data = get_previous_trial_data(conn, nct_id)
+            if not prev_data:
+                continue
 
-        changes = []
-        if curr_status != prev_data["status"]:
-            changes.append(f"Status: {prev_data['status']} → {curr_status}")
-        if curr_phase != prev_data["phase"]:
-            changes.append(f"Phase: {prev_data['phase']} → {curr_phase}")
-        if curr_enroll != prev_data["enrollment"]:
-            changes.append(f"Enrollment: {prev_data['enrollment']} → {curr_enroll}")
-        if curr_start != prev_data["start_date"]:
-            changes.append(f"Start Date: {prev_data['start_date']} → {curr_start}")
-        if curr_prim_comp != prev_data["primary_completion"]:
-            changes.append(f"Primary Completion: {prev_data['primary_completion']} → {curr_prim_comp}")
-        if curr_comp != prev_data["completion_date"]:
-            changes.append(f"Completion Date: {prev_data['completion_date']} → {curr_comp}")
+            prev_countries = get_previous_countries(conn, nct_id)
 
-        # Countries changes
-        added_countries = set(curr_countries_list) - set(prev_countries)
-        removed_countries = set(prev_countries) - set(curr_countries_list)
-        if added_countries:
-            changes.append(f"Added Countries: {', '.join(sorted(added_countries))}")
-        if removed_countries:
-            changes.append(f"Removed Countries: {', '.join(sorted(removed_countries))}")
-        elif curr_countries_str != ", ".join(prev_countries):
-            changes.append(f"Countries Updated: {', '.join(prev_countries)} → {curr_countries_str}")
+            # Current values
+            curr_status = status_mod.get("overallStatus", "NA")
+            curr_enroll = str(status_mod.get("enrollmentInfo", {}).get("count", "NA"))
+            curr_start = status_mod.get("startDateStruct", {}).get("date", "NA")
+            curr_prim_comp = status_mod.get("primaryCompletionDateStruct", {}).get("date", "NA")
+            curr_comp = status_mod.get("completionDateStruct", {}).get("date", "NA")
 
-        if changes:
-            updates.append(f"{nct_id} | {sponsor} ({conditions}): {' | '.join(changes)}")
+            curr_locations = protocol.get("contactsLocationsModule", {}).get("locations", [])
+            curr_countries_list = sorted(set(loc.get("country") for loc in curr_locations if loc.get("country")))
+            curr_countries_str = ", ".join(curr_countries_list)
 
-    conn.close()
+            changes = []
+            if curr_status != prev_data["status"]:
+                changes.append(f"Status updated from {prev_data['status']} to {curr_status}")
+            if curr_enroll != prev_data["enrollment"]:
+                changes.append(f"Enrollment updated from {prev_data['enrollment']} to {curr_enroll}")
+            if curr_start != prev_data["start_date"]:
+                changes.append(f"Start date updated from {prev_data['start_date']} to {curr_start}")
+            if curr_prim_comp != prev_data["primary_completion"]:
+                changes.append(f"Primary completion updated from {prev_data['primary_completion']} to {curr_prim_comp}")
+            if curr_comp != prev_data["completion_date"]:
+                changes.append(f"Completion date updated from {prev_data['completion_date']} to {curr_comp}")
 
-    st.success(f"✅ New Trials: {len(new_trials)} | Updates: {len(updates)}")
-    
-    if new_trials:
-        st.subheader("New Trials")
-        for trial in new_trials[:10]:
-            st.write(trial)
-    
-    if updates:
-        st.subheader("Updates")
-        for upd in updates[:10]:
-            st.write(f"🔄 {upd}")
+            # Countries changes
+            added_countries = set(curr_countries_list) - set(prev_countries)
+            removed_countries = set(prev_countries) - set(curr_countries_list)
+            if added_countries:
+                changes.append(f"Location added {', '.join(sorted(added_countries))}")
+            if removed_countries:
+                changes.append(f"Location removed {', '.join(sorted(removed_countries))}")
+            elif curr_countries_str != ", ".join(prev_countries):
+                changes.append(f"Location updated: {', '.join(prev_countries)} → {curr_countries_str}")
 
-    pdf_file = generate_pdf(condition, start_date_str, end_date_str, new_trials, updates)
-    with open(pdf_file, "rb") as f:
-        st.download_button(
-            label="📥 Download Full PDF Report",
-            data=f,
-            file_name=pdf_file,
-            mime="application/pdf"
-        )
+            if changes:
+                # ✅ NEW PROFESSIONAL FORMAT
+                update_summary = f"{sponsor}'s Phase {phase_str} trial evaluating '{intervention}' in patients with '{conditions}' has been updated"
+                updates.append(f"{update_summary}\n" + "\n".join(changes))
+
+        conn.close()
+
+        st.success(f"✅ New Trials: {len(new_trials)} | Updates: {len(updates)}")
+        
+        if new_trials:
+            st.subheader("New Trials")
+            for trial in new_trials[:10]:
+                st.write(trial)
+        
+        if updates:
+            st.subheader("Updates")
+            for upd in updates[:10]:
+                st.markdown(f"**🔄 {upd}**")
+
+        pdf_file = generate_pdf(condition, start_date_str, end_date_str, new_trials, updates)
+        with open(pdf_file, "rb") as f:
+            st.download_button(
+                label="📥 Download Full PDF Report",
+                data=f,
+                file_name=pdf_file,
+                mime="application/pdf"
+            )
+            
+    except Exception as e:
+        st.error(f"❌ Database error: {str(e)}")
+        st.info("Check AACT connection and table schemas")
