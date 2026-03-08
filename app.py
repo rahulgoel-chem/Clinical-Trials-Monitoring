@@ -47,11 +47,12 @@ def get_previous_trial_data(conn, nct_id):
 
 def get_previous_countries(conn, nct_id):
     cur = conn.cursor()
+    # ✅ FIXED: Use 'name' column from facilities table (standard AACT schema)
     query = """
-    SELECT DISTINCT country
-    FROM countries 
-    WHERE nct_id = %s AND removed = false
-    ORDER BY country
+    SELECT DISTINCT name 
+    FROM facilities 
+    WHERE nct_id = %s AND name IS NOT NULL
+    ORDER BY name
     """
     cur.execute(query, (nct_id,))
     rows = cur.fetchall()
@@ -217,11 +218,18 @@ if run_button:
                 continue
 
             sponsor = sponsor_mod.get("leadSponsor", {}).get("name", "Unknown")
-            title = ident.get("briefTitle", "")[:100]
-            conditions = ", ".join(protocol.get("conditionsModule", {}).get("conditions", [])[:3])
-            intervention = ident.get("briefTitle", "").split("in patients with")[-2].split("using")[-1].strip() if "in patients with" in ident.get("briefTitle", "") else "intervention"
-            
+            title = ident.get("briefTitle", "")[:120]
+            conditions = ", ".join(protocol.get("conditionsModule", {}).get("conditions", [])[:2])
             phase_str = ", ".join(design_mod.get("phases", [])) or "NA"
+            
+            # Clean intervention extraction from title
+            intervention = "intervention"
+            if "in patients with" in title.lower():
+                parts = title.lower().split("in patients with")
+                if len(parts) > 1 and parts[0].strip():
+                    intervention = parts[0].split()[-1].strip("'").strip()
+            elif "study of" in title.lower():
+                intervention = title.lower().split("study of")[-1].split("in") [0].strip()
 
             # NEW TRIAL DETECTION
             first_post_str = status_mod.get("studyFirstPostDateStruct", {}).get("date")
@@ -244,7 +252,7 @@ if run_button:
                     )
                     continue
 
-            # UPDATE DETECTION - NEW FORMAT ✅
+            # UPDATE DETECTION
             prev_data = get_previous_trial_data(conn, nct_id)
             if not prev_data:
                 continue
@@ -285,7 +293,7 @@ if run_button:
                 changes.append(f"Location updated: {', '.join(prev_countries)} → {curr_countries_str}")
 
             if changes:
-                # ✅ NEW PROFESSIONAL FORMAT
+                # Professional executive format
                 update_summary = f"{sponsor}'s Phase {phase_str} trial evaluating '{intervention}' in patients with '{conditions}' has been updated"
                 updates.append(f"{update_summary}\n" + "\n".join(changes))
 
