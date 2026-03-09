@@ -351,10 +351,12 @@ if run_button:
         # -------- UPDATE DETECTION -------- #
         
         current_status = status.get("overallStatus", "NA")
+
+        current_phase = ", ".join(design.get("phases", [])) or "NA"
+        prev_phase = prev["phase"]
         
-        current_enrollment = str(
-            design.get("enrollmentInfo", {}).get("count", "NA")
-        )
+        current_enrollment = design.get("enrollmentInfo", {}).get("count")
+        current_enrollment = str(current_enrollment) if current_enrollment else "NA"
         
         current_start_date = status.get("startDateStruct", {}).get("date", "NA")
         
@@ -388,7 +390,17 @@ if run_button:
         changes = []
         
         # STATUS CHANGE
-        if current_status != prev_status:
+        termination_statuses = ["TERMINATED", "SUSPENDED", "WITHDRAWN"]
+
+        # Detect termination event
+        if (
+            current_status.upper() in termination_statuses
+            and prev_status.upper() not in termination_statuses
+        ):
+            changes.append(f"TRIAL TERMINATED: Status changed {prev_status} → {current_status}")
+        
+        # Normal status change
+        elif current_status != prev_status:
             changes.append(f"Status: {prev_status} → {current_status}")
         
         # START DATE CHANGE
@@ -428,7 +440,7 @@ if run_button:
         if changes:
         
             updates.append(
-                f"[{nct_id}] {sponsor} trial in {conditions}: "
+                f"[{nct_id}] {sponsor} trial in {conditions} | Phase: {current_phase}: "
                 + "; ".join(changes)
             )
     conn.close()
