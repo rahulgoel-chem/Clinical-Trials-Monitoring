@@ -26,14 +26,19 @@ def connect_aact():
         port=AACT_PORT
     )
 
-
+# Normalize date to avoid formatting updates
 def normalize_date(d):
     if not d or d == "NA":
         return "NA"
-    if len(d) == 7:
-        return d + "-01"
-    return d
+    try:
+        return datetime.strptime(str(d)[:10], "%Y-%m-%d").date().isoformat()
+    except:
+        return d
 
+def normalize_text(t):
+    if not t:
+        return "NA"
+    return str(t).strip().lower()
 
 def get_previous_trial_data(conn, nct_id):
 
@@ -88,7 +93,7 @@ def get_current_countries(protocol):
     for loc in locations:
         c = loc.get("country")
         if c:
-            countries.add(c)
+            countries.add(c.strip())
 
     return sorted(list(countries))
 
@@ -99,7 +104,6 @@ LEFT = 60
 RIGHT = 550
 TOP = 750
 BOTTOM = 60
-
 
 def add_footer(c):
 
@@ -112,8 +116,7 @@ def add_footer(c):
         f"Clinical Trial Intelligence Report | Page {page}"
     )
 
-
-def draw_wrapped_text(c,text,x,y,width=90,line_height=14):
+def draw_wrapped_text(c,text,x,y,width=85,line_height=14):
 
     lines = wrap(text,width)
 
@@ -217,16 +220,7 @@ if run_button:
 
     params = {
         "query.cond": condition,
-        "pageSize": 1000,
-        "fields": ",".join([
-            "protocolSection.identificationModule",
-            "protocolSection.statusModule",
-            "protocolSection.designModule",
-            "protocolSection.sponsorCollaboratorsModule",
-            "protocolSection.contactsLocationsModule",
-            "protocolSection.conditionsModule",
-            "protocolSection.armsInterventionsModule"
-        ])
+        "pageSize": 1000
     }
 
     studies = []
@@ -238,7 +232,6 @@ if run_button:
             params["pageToken"] = next_token
 
         response = requests.get(base_url,params=params)
-
         data = response.json()
 
         studies.extend(data.get("studies",[]))
@@ -281,8 +274,6 @@ if run_button:
 
         phase = design.get("phases",["NA"])[0]
 
-        # -------- DATE FILTER -------- #
-
         first_post_str = status.get("studyFirstPostDateStruct",{}).get("date")
 
         update_post_str = status.get("lastUpdatePostDateStruct",{}).get("date")
@@ -296,15 +287,11 @@ if run_button:
         if update_post_str:
             update_post_date = datetime.strptime(update_post_str,"%Y-%m-%d").date()
 
-        # -------- NEW TRIAL -------- #
-
         if first_post_date and start_date <= first_post_date <= end_date:
 
             new_trials.append(
                 f"[{nct_id}] {sponsor}'s {phase} trial evaluating {title} has been registered."
             )
-
-        # -------- UPDATE FILTER -------- #
 
         if not (update_post_date and start_date <= update_post_date <= end_date):
             continue
@@ -318,7 +305,7 @@ if run_button:
 
         current_status = status.get("overallStatus","NA")
 
-        if current_status != prev["status"]:
+        if normalize_text(current_status) != normalize_text(prev["status"]):
             changes.append(
                 f"Status updated from {prev['status']} to {current_status}"
             )
@@ -359,18 +346,18 @@ if run_button:
                 f"Enrollment updated from {prev['enrollment']} to {enrollment}"
             )
 
-        # -------- LOCATION CHANGES -------- #
-
         prev_countries = get_previous_countries(conn,nct_id)
 
         curr_countries = get_current_countries(protocol)
 
         added = list(set(curr_countries) - set(prev_countries))
+        removed = list(set(prev_countries) - set(curr_countries))
 
         if added:
-            changes.append(
-                "locations added " + ", ".join(sorted(added))
-            )
+            changes.append("locations added " + ", ".join(sorted(added)))
+
+        if removed:
+            changes.append("locations removed " + ", ".join(sorted(removed)))
 
         if changes:
 
@@ -384,7 +371,6 @@ if run_button:
     conn.close()
 
     st.success(f"Total New Trials: {len(new_trials)}")
-
     st.success(f"Total Updates: {len(updates)}")
 
     if new_trials:
