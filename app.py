@@ -353,6 +353,12 @@ if run_button:
         current_status = status.get("overallStatus", "NA")
 
         current_phase = ", ".join(design.get("phases", [])) or "NA"
+
+        prev = get_previous_trial_data(conn, nct_id)
+        
+        if not prev:
+            continue
+        
         prev_phase = prev["phase"]
         
         current_enrollment = design.get("enrollmentInfo", {}).get("count")
