@@ -22,12 +22,27 @@ def normalize_text(v):
     return str(v).strip().lower()
 
 def normalize_date(d):
+
     if not d or d == "NA":
         return "NA"
-    try:
-        return datetime.strptime(str(d)[:10], "%Y-%m-%d").date().isoformat()
-    except:
-        return d
+
+    d = str(d).strip()
+
+    formats = [
+        "%Y-%m-%d",
+        "%Y-%m",
+        "%Y/%m/%d",
+        "%Y/%m"
+    ]
+
+    for fmt in formats:
+        try:
+            dt = datetime.strptime(d, fmt)
+            return dt.strftime("%Y-%m")
+        except:
+            continue
+
+    return d[:7]
 
 def normalize_enrollment(v):
     try:
@@ -124,8 +139,7 @@ def add_footer(c):
     )
 
 
-def draw_wrapped_text(c,text,x,y,width=85,line_height=14):
-
+def draw_wrapped_text(c,text,x,y,width=95,line_height=14):
     lines = wrap(text,width)
 
     for line in lines:
@@ -361,18 +375,18 @@ if run_button:
 
         prev_enrollment = normalize_enrollment(prev["enrollment"])
 
-        if enrollment != prev_enrollment:
+        if enrollment > 0 and prev_enrollment > 0 and enrollment != prev_enrollment:
             changes.append(
                 f"Enrollment updated from {prev_enrollment} to {enrollment}"
             )
 
         # COUNTRY CHANGES
 
-        prev_countries = get_previous_countries(conn,nct_id)
-        curr_countries = get_current_countries(protocol)
-
-        added = list(set(curr_countries) - set(prev_countries))
-        removed = list(set(prev_countries) - set(curr_countries))
+        prev_set = set([c.strip().lower() for c in prev_countries])
+        curr_set = set([c.strip().lower() for c in curr_countries])
+        
+        added = sorted(list(curr_set - prev_set))
+        removed = sorted(list(prev_set - curr_set))
 
         if added:
             changes.append("Locations added: " + ", ".join(sorted(added)))
