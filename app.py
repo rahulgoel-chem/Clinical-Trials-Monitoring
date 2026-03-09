@@ -76,6 +76,34 @@ def get_previous_countries(conn, nct_id):
 
     return sorted([r[0] for r in rows if r[0]])
 
+# Helper to extract year and month from date string
+def year_month(d):
+    try:
+        dt = datetime.strptime(d, "%Y-%m-%d")
+        return dt.year, dt.month
+    except:
+        return None, None
+
+# START DATE CHANGE
+if str(current_start_date) != str(prev_start_date):
+    y1, m1 = year_month(prev_start_date)
+    y2, m2 = year_month(current_start_date)
+    if y1 != y2 or m1 != m2:
+        changes.append(f"Start Date: {prev_start_date} → {current_start_date}")
+
+# PRIMARY COMPLETION CHANGE
+if str(current_primary_completion) != str(prev_primary_completion):
+    y1, m1 = year_month(prev_primary_completion)
+    y2, m2 = year_month(current_primary_completion)
+    if y1 != y2 or m1 != m2:
+        changes.append(f"Primary Completion: {prev_primary_completion} → {current_primary_completion}")
+
+# STUDY COMPLETION CHANGE
+if str(current_completion) != str(prev_completion):
+    y1, m1 = year_month(prev_completion)
+    y2, m2 = year_month(current_completion)
+    if y1 != y2 or m1 != m2:
+        changes.append(f"Study Completion: {prev_completion} → {current_completion}")
 
 # -------- PDF UTILITIES -------- #
 
