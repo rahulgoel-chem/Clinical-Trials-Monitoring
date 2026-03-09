@@ -2,7 +2,6 @@ import streamlit as st
 import requests
 from datetime import datetime
 import psycopg2
-
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 from textwrap import wrap
@@ -15,6 +14,27 @@ AACT_PORT = st.secrets["AACT_PORT"]
 AACT_USER = st.secrets["AACT_USER"]
 AACT_PASS = st.secrets["AACT_PASS"]
 
+# -------- NORMALIZATION -------- #
+
+def normalize_text(v):
+    if not v:
+        return "NA"
+    return str(v).strip().lower()
+
+def normalize_date(d):
+    if not d or d == "NA":
+        return "NA"
+    try:
+        return datetime.strptime(str(d)[:10], "%Y-%m-%d").date().isoformat()
+    except:
+        return d
+
+def normalize_enrollment(v):
+    try:
+        return int(v)
+    except:
+        return 0
+
 # -------- DATABASE -------- #
 
 def connect_aact():
@@ -26,19 +46,6 @@ def connect_aact():
         port=AACT_PORT
     )
 
-# Normalize date to avoid formatting updates
-def normalize_date(d):
-    if not d or d == "NA":
-        return "NA"
-    try:
-        return datetime.strptime(str(d)[:10], "%Y-%m-%d").date().isoformat()
-    except:
-        return d
-
-def normalize_text(t):
-    if not t:
-        return "NA"
-    return str(t).strip().lower()
 
 def get_previous_trial_data(conn, nct_id):
 
@@ -61,7 +68,7 @@ def get_previous_trial_data(conn, nct_id):
             "start": str(row[1]) if row[1] else "NA",
             "primary_completion": str(row[2]) if row[2] else "NA",
             "completion": str(row[3]) if row[3] else "NA",
-            "enrollment": str(row[4]) if row[4] else "NA"
+            "enrollment": str(row[4]) if row[4] else "0"
         }
 
     return None
@@ -97,13 +104,13 @@ def get_current_countries(protocol):
 
     return sorted(list(countries))
 
-
 # -------- PDF UTILITIES -------- #
 
 LEFT = 60
 RIGHT = 550
 TOP = 750
 BOTTOM = 60
+
 
 def add_footer(c):
 
@@ -115,6 +122,7 @@ def add_footer(c):
         30,
         f"Clinical Trial Intelligence Report | Page {page}"
     )
+
 
 def draw_wrapped_text(c,text,x,y,width=85,line_height=14):
 
@@ -180,8 +188,11 @@ def generate_pdf(condition,start_date,end_date,new_trials,updates):
     c.setFont("Helvetica",10)
 
     if not new_trials:
+
         y = draw_wrapped_text(c,"No new trials detected.",60,y)
+
     else:
+
         for t in new_trials:
             y = draw_wrapped_text(c,f"• {t}",60,y)
             y -= 5
@@ -191,8 +202,11 @@ def generate_pdf(condition,start_date,end_date,new_trials,updates):
     y = draw_section_title(c,"TRIAL UPDATES",y,width)
 
     if not updates:
+
         y = draw_wrapped_text(c,"No trial updates detected.",60,y)
+
     else:
+
         for u in updates:
             y = draw_wrapped_text(c,f"• {u}",60,y)
             y -= 5
@@ -251,11 +265,8 @@ if run_button:
         protocol = study.get("protocolSection",{})
 
         status = protocol.get("statusModule",{})
-
         sponsor_mod = protocol.get("sponsorCollaboratorsModule",{})
-
         design = protocol.get("designModule",{})
-
         ident = protocol.get("identificationModule",{})
 
         nct_id = ident.get("nctId")
@@ -269,13 +280,12 @@ if run_button:
             continue
 
         sponsor = sponsor_mod.get("leadSponsor",{}).get("name","NA")
-
         title = ident.get("briefTitle","")
-
         phase = design.get("phases",["NA"])[0]
 
-        first_post_str = status.get("studyFirstPostDateStruct",{}).get("date")
+        # DATE FILTER
 
+        first_post_str = status.get("studyFirstPostDateStruct",{}).get("date")
         update_post_str = status.get("lastUpdatePostDateStruct",{}).get("date")
 
         first_post_date = None
@@ -287,14 +297,18 @@ if run_button:
         if update_post_str:
             update_post_date = datetime.strptime(update_post_str,"%Y-%m-%d").date()
 
+        if not (
+            (first_post_date and start_date <= first_post_date <= end_date)
+            or
+            (update_post_date and start_date <= update_post_date <= end_date)
+        ):
+            continue
+
         if first_post_date and start_date <= first_post_date <= end_date:
 
             new_trials.append(
-                f"[{nct_id}] {sponsor}'s {phase} trial evaluating {title} has been registered."
+                f"[{nct_id}] {sponsor} started NEW {phase} trial: {title}"
             )
-
-        if not (update_post_date and start_date <= update_post_date <= end_date):
-            continue
 
         prev = get_previous_trial_data(conn,nct_id)
 
@@ -303,6 +317,8 @@ if run_button:
 
         changes = []
 
+        # STATUS CHANGE
+
         current_status = status.get("overallStatus","NA")
 
         if normalize_text(current_status) != normalize_text(prev["status"]):
@@ -310,9 +326,9 @@ if run_button:
                 f"Status updated from {prev['status']} to {current_status}"
             )
 
-        study_start = normalize_date(
-            status.get("startDateStruct",{}).get("date","NA")
-        )
+        # DATE CHANGES
+
+        study_start = normalize_date(status.get("startDateStruct",{}).get("date","NA"))
 
         if study_start != normalize_date(prev["start"]):
             changes.append(
@@ -337,31 +353,36 @@ if run_button:
                 f"Study Completion date updated from {prev['completion']} to {study_completion}"
             )
 
-        enrollment = str(
-            design.get("enrollmentInfo",{}).get("count","NA")
+        # ENROLLMENT CHANGE
+
+        enrollment = normalize_enrollment(
+            design.get("enrollmentInfo",{}).get("count","0")
         )
 
-        if enrollment != prev["enrollment"]:
+        prev_enrollment = normalize_enrollment(prev["enrollment"])
+
+        if enrollment != prev_enrollment:
             changes.append(
-                f"Enrollment updated from {prev['enrollment']} to {enrollment}"
+                f"Enrollment updated from {prev_enrollment} to {enrollment}"
             )
 
-        prev_countries = get_previous_countries(conn,nct_id)
+        # COUNTRY CHANGES
 
+        prev_countries = get_previous_countries(conn,nct_id)
         curr_countries = get_current_countries(protocol)
 
         added = list(set(curr_countries) - set(prev_countries))
         removed = list(set(prev_countries) - set(curr_countries))
 
         if added:
-            changes.append("locations added " + ", ".join(sorted(added)))
+            changes.append("Locations added: " + ", ".join(sorted(added)))
 
         if removed:
-            changes.append("locations removed " + ", ".join(sorted(removed)))
+            changes.append("Locations removed: " + ", ".join(sorted(removed)))
 
         if changes:
 
-            report = f"[{nct_id}] {sponsor}'s {phase} trial evaluating {title} has been updated.\n"
+            report = f"[{nct_id}] {sponsor}'s {phase} trial '{title}' has been updated.\n"
 
             for c in changes:
                 report += c + " |\n"
