@@ -29,12 +29,6 @@ def connect_aact():
     )
 
 
-def normalize_date(d):
-    if not d or d == "NA":
-        return "NA"
-    return str(d)[:7]   # YYYY-MM
-
-
 def get_previous_trial_data(conn, nct_id):
 
     cur = conn.cursor()
@@ -59,13 +53,12 @@ def get_previous_trial_data(conn, nct_id):
             "status": str(row[0]) if row[0] else "NA",
             "phase": str(row[1]) if row[1] else "NA",
             "enrollment": str(row[2]) if row[2] else "NA",
-            "start_date": normalize_date(row[3]),
-            "primary_completion": normalize_date(row[4]),
-            "completion": normalize_date(row[5])
+            "start_date": str(row[3]) if row[3] else "NA",
+            "primary_completion": str(row[4]) if row[4] else "NA",
+            "completion": str(row[5]) if row[5] else "NA"
         }
 
     return None
-
 
 def get_previous_countries(conn, nct_id):
 
@@ -186,7 +179,8 @@ def generate_pdf(condition, start_date, end_date, new_trials, updates):
 
     else:
         for trial in new_trials:
-            y = draw_wrapped_text(c, f"• {trial}", 60, y)
+            trial_text = f"• {trial}"
+            y = draw_wrapped_text(c, trial_text, 60, y)
             y -= 5
 
     y -= 20
@@ -200,7 +194,8 @@ def generate_pdf(condition, start_date, end_date, new_trials, updates):
 
     else:
         for upd in updates:
-            y = draw_wrapped_text(c, f"• {upd}", 60, y)
+            upd_text = f"• {upd}"
+            y = draw_wrapped_text(c, upd_text, 60, y)
             y -= 5
 
     add_footer(c)
@@ -229,8 +224,18 @@ if run_button:
 
     base_url = "https://clinicaltrials.gov/api/v2/studies"
 
+    fields = [
+        "protocolSection.identificationModule",
+        "protocolSection.statusModule",
+        "protocolSection.designModule",
+        "protocolSection.sponsorCollaboratorsModule",
+        "protocolSection.contactsLocationsModule",
+        "protocolSection.conditionsModule"
+    ]
+
     params = {
         "query.cond": condition,
+        "fields": ",".join(fields),
         "pageSize": 1000
     }
 
@@ -270,9 +275,9 @@ if run_button:
         if not upd_date_str:
             continue
 
-        upd_date = datetime.strptime(upd_date_str, "%Y-%m-%d").date()
+        upd_date = datetime.strptime(upd_date_str, "%Y-%m-%d")
 
-        if not (start_date <= upd_date <= end_date):
+        if not (start_date <= upd_date.date() <= end_date):
             continue
 
         sponsor_class = sponsor_mod.get("leadSponsor", {}).get("class", "")
@@ -282,109 +287,171 @@ if run_button:
 
         ident = protocol.get("identificationModule", {})
         nct_id = ident.get("nctId")
+        title = ident.get("briefTitle", "")
 
         sponsor = sponsor_mod.get("leadSponsor", {}).get("name", "NA")
-
-        title = ident.get("briefTitle", "")
 
         conditions = ", ".join(
             protocol.get("conditionsModule", {}).get("conditions", [])
         )
 
-        prev = get_previous_trial_data(conn, nct_id)
+        # -------- NEW TRIAL DETECTION -------- #
 
-        if not prev:
-            continue
+        first_post_str = status.get("studyFirstPostDateStruct", {}).get("date")
 
+        if first_post_str:
+
+            first_post_date = datetime.strptime(first_post_str, "%Y-%m-%d").date()
+
+            if start_date <= first_post_date <= end_date:
+
+                phase = ", ".join(design.get("phases", [])) or "NA"
+
+                trial_status = status.get("overallStatus", "NA")
+
+                study_start = status.get("startDateStruct", {}).get("date", "NA")
+
+                primary_completion = status.get(
+                    "primaryCompletionDateStruct", {}
+                ).get("date", "NA")
+
+                study_completion = status.get(
+                    "completionDateStruct", {}
+                ).get("date", "NA")
+
+                enrollment = design.get(
+                    "enrollmentInfo", {}
+                ).get("count", "NA")
+
+                locations = protocol.get(
+                    "contactsLocationsModule", {}
+                ).get("locations", [])
+
+                countries = sorted(list(set([
+                    loc.get("country") for loc in locations if loc.get("country")
+                ])))
+
+                countries_text = ", ".join(countries) if countries else "NA"
+
+                trial_report = (
+                    f"[{nct_id}] {sponsor} started NEW trial: {title} | "
+                    f"Status: {trial_status} | "
+                    f"Phase: {phase} | "
+                    f"Start: {study_start} | "
+                    f"Primary Completion: {primary_completion} | "
+                    f"Study Completion: {study_completion} | "
+                    f"Enrollment: {enrollment} | "
+                    f"Countries: {countries_text}"
+                )
+
+                if nct_id not in seen_trials:
+                    new_trials.append(trial_report)
+                    seen_trials.add(nct_id)
+
+        # -------- UPDATE DETECTION -------- #
+        
         current_status = status.get("overallStatus", "NA")
 
         current_phase = ", ".join(design.get("phases", [])) or "NA"
 
-        current_enrollment = str(
-            design.get("enrollmentInfo", {}).get("count", "NA")
-        )
-
-        current_start = normalize_date(
-            status.get("startDateStruct", {}).get("date")
-        )
-
-        current_primary = normalize_date(
-            status.get("primaryCompletionDateStruct", {}).get("date")
-        )
-
-        current_completion = normalize_date(
-            status.get("completionDateStruct", {}).get("date")
-        )
-
-        locations = protocol.get(
-            "contactsLocationsModule", {}
-        ).get("locations", [])
-
-        current_countries = sorted(
-            list(set([
-                loc.get("country")
-                for loc in locations
-                if loc.get("country")
-            ]))
-        )
-
+        prev = get_previous_trial_data(conn, nct_id)
+        
+        if not prev:
+            continue
+        
+        prev_phase = prev["phase"]
+        
+        current_enrollment = design.get("enrollmentInfo", {}).get("count")
+        current_enrollment = str(current_enrollment) if current_enrollment else "NA"
+        
+        current_start_date = status.get("startDateStruct", {}).get("date", "NA")
+        
+        current_primary_completion = status.get(
+            "primaryCompletionDateStruct", {}
+        ).get("date", "NA")
+        
+        current_completion = status.get(
+            "completionDateStruct", {}
+        ).get("date", "NA")
+        
+        locations = protocol.get("contactsLocationsModule", {}).get("locations", [])
+        
+        current_countries = sorted(list(set([
+            loc.get("country") for loc in locations if loc.get("country")
+        ])))
+        
+        prev = get_previous_trial_data(conn, nct_id)
+        
+        if not prev:
+            continue
+        
+        prev_status = prev["status"]
+        prev_enrollment = prev["enrollment"]
+        prev_start_date = prev["start_date"]
+        prev_primary_completion = prev["primary_completion"]
+        prev_completion = prev["completion"]
+        
         prev_countries = get_previous_countries(conn, nct_id)
-
+        
         changes = []
-
+        
         # STATUS CHANGE
-        if current_status != prev["status"]:
-            changes.append(f"Status: {prev['status']} → {current_status}")
+        termination_statuses = ["TERMINATED", "SUSPENDED", "WITHDRAWN"]
 
-        # START DATE
-        if current_start != prev["start_date"]:
+        # Detect termination event
+        if (
+            current_status.upper() in termination_statuses
+            and prev_status.upper() not in termination_statuses
+        ):
+            changes.append(f"TRIAL TERMINATED: Status changed {prev_status} → {current_status}")
+        
+        # Normal status change
+        elif current_status != prev_status:
+            changes.append(f"Status: {prev_status} → {current_status}")
+        
+        # START DATE CHANGE
+        if str(current_start_date) != str(prev_start_date):
+            changes.append(f"Start Date: {prev_start_date} → {current_start_date}")
+        
+        # PRIMARY COMPLETION CHANGE
+        if str(current_primary_completion) != str(prev_primary_completion):
             changes.append(
-                f"Start Date: {prev['start_date']} → {current_start}"
+                f"Primary Completion: {prev_primary_completion} → {current_primary_completion}"
             )
-
-        # PRIMARY COMPLETION
-        if current_primary != prev["primary_completion"]:
+        
+        # STUDY COMPLETION CHANGE
+        if str(current_completion) != str(prev_completion):
             changes.append(
-                f"Primary Completion: {prev['primary_completion']} → {current_primary}"
+                f"Study Completion: {prev_completion} → {current_completion}"
             )
-
-        # STUDY COMPLETION
-        if current_completion != prev["completion"]:
+        
+        # ENROLLMENT CHANGE
+        if current_enrollment != prev_enrollment:
             changes.append(
-                f"Study Completion: {prev['completion']} → {current_completion}"
+                f"Enrollment: {prev_enrollment} → {current_enrollment}"
             )
-
-        # ENROLLMENT
-        if current_enrollment != prev["enrollment"]:
-            changes.append(
-                f"Enrollment: {prev['enrollment']} → {current_enrollment}"
-            )
-
-        # COUNTRY ADD
-        added = set(current_countries) - set(prev_countries)
-
-        if added:
-            changes.append(
-                "Countries Added: " + ", ".join(sorted(added))
-            )
-
-        # COUNTRY REMOVE
-        removed = set(prev_countries) - set(current_countries)
-
-        if removed:
-            changes.append(
-                "Countries Removed: " + ", ".join(sorted(removed))
-            )
-
+        
+        # COUNTRY ADDITION
+        added_countries = list(set(current_countries) - set(prev_countries))
+        
+        if added_countries:
+            changes.append("Countries Added: " + ", ".join(sorted(added_countries)))
+        
+        # COUNTRY REMOVAL
+        removed_countries = list(set(prev_countries) - set(current_countries))
+        
+        if removed_countries:
+            changes.append("Countries Removed: " + ", ".join(sorted(removed_countries)))
+        
         if changes:
-
+        
             updates.append(
                 f"[{nct_id}] {sponsor} trial in {conditions} | Phase: {current_phase}: "
                 + "; ".join(changes)
             )
-
     conn.close()
 
+    st.success(f"Total New Trials: {len(new_trials)}")
     st.success(f"Total Updates: {len(updates)}")
 
     file_name = generate_pdf(
