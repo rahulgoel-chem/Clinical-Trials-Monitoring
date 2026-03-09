@@ -348,106 +348,78 @@ if run_button:
                     new_trials.append(trial_report)
                     seen_trials.add(nct_id)
 
-        # -------- UPDATE DETECTION -------- #
+        # -------- IMPROVED UPDATE DETECTION -------- #
         
-        current_status = status.get("overallStatus", "NA")
-
-        current_phase = ", ".join(design.get("phases", [])) or "NA"
-
         prev = get_previous_trial_data(conn, nct_id)
-        
         if not prev:
             continue
         
-        prev_phase = prev["phase"]
-        
-        current_enrollment = design.get("enrollmentInfo", {}).get("count")
-        current_enrollment = str(current_enrollment) if current_enrollment else "NA"
-        
-        current_start_date = status.get("startDateStruct", {}).get("date", "NA")
-        
-        current_primary_completion = status.get(
-            "primaryCompletionDateStruct", {}
-        ).get("date", "NA")
-        
-        current_completion = status.get(
-            "completionDateStruct", {}
-        ).get("date", "NA")
-        
-        locations = protocol.get("contactsLocationsModule", {}).get("locations", [])
-        
-        current_countries = sorted(list(set([
-            loc.get("country") for loc in locations if loc.get("country")
-        ])))
-        
-        prev = get_previous_trial_data(conn, nct_id)
-        
-        if not prev:
-            continue
-        
-        prev_status = prev["status"]
-        prev_enrollment = prev["enrollment"]
-        prev_start_date = prev["start_date"]
-        prev_primary_completion = prev["primary_completion"]
-        prev_completion = prev["completion"]
-        
-        prev_countries = get_previous_countries(conn, nct_id)
-        
+        # 1. Normalize Status for comparison
+        current_status = status.get("overallStatus", "NA").strip()
+        prev_status = prev["status"].strip()
+
+        # 2. Normalize Dates (Ensure they are strings in YYYY-MM-DD format)
+        def clean_date(d):
+            if not d or d == "NA": return "NA"
+            # If it's already a string with time, take just the date part
+            return str(d).split(' ')[0]
+
+        curr_start = clean_date(status.get("startDateStruct", {}).get("date"))
+        prev_start = clean_date(prev["start_date"])
+
+        curr_prim_comp = clean_date(status.get("primaryCompletionDateStruct", {}).get("date"))
+        prev_prim_comp = clean_date(prev["primary_completion"])
+
+        curr_comp = clean_date(status.get("completionDateStruct", {}).get("date"))
+        prev_comp = clean_date(prev["completion"])
+
+        # 3. Normalize Enrollment (Convert both to string and strip decimals)
+        def clean_enroll(e):
+            if e is None or e == "NA": return "NA"
+            return str(int(float(e))) # Handles '100.0' vs '100'
+
+        curr_enroll = clean_enroll(design.get("enrollmentInfo", {}).get("count"))
+        prev_enroll = clean_enroll(prev["enrollment"])
+
         changes = []
-        
+
         # STATUS CHANGE
         termination_statuses = ["TERMINATED", "SUSPENDED", "WITHDRAWN"]
+        if current_status.upper() != prev_status.upper():
+            if current_status.upper() in termination_statuses and prev_status.upper() not in termination_statuses:
+                changes.append(f"TRIAL TERMINATED: {prev_status} → {current_status}")
+            else:
+                changes.append(f"Status: {prev_status} → {current_status}")
 
-        # Detect termination event
-        if (
-            current_status.upper() in termination_statuses
-            and prev_status.upper() not in termination_statuses
-        ):
-            changes.append(f"TRIAL TERMINATED: Status changed {prev_status} → {current_status}")
-        
-        # Normal status change
-        elif current_status != prev_status:
-            changes.append(f"Status: {prev_status} → {current_status}")
-        
         # START DATE CHANGE
-        if str(current_start_date) != str(prev_start_date):
-            changes.append(f"Start Date: {prev_start_date} → {current_start_date}")
-        
+        if curr_start != prev_start:
+            changes.append(f"Start Date: {prev_start} → {curr_start}")
+
         # PRIMARY COMPLETION CHANGE
-        if str(current_primary_completion) != str(prev_primary_completion):
-            changes.append(
-                f"Primary Completion: {prev_primary_completion} → {current_primary_completion}"
-            )
-        
+        if curr_prim_comp != prev_prim_comp:
+            changes.append(f"Primary Completion: {prev_prim_comp} → {curr_prim_comp}")
+
         # STUDY COMPLETION CHANGE
-        if str(current_completion) != str(prev_completion):
-            changes.append(
-                f"Study Completion: {prev_completion} → {current_completion}"
-            )
-        
+        if curr_comp != prev_comp:
+            changes.append(f"Study Completion: {prev_comp} → {curr_comp}")
+
         # ENROLLMENT CHANGE
-        if current_enrollment != prev_enrollment:
-            changes.append(
-                f"Enrollment: {prev_enrollment} → {current_enrollment}"
-            )
-        
-        # COUNTRY ADDITION
-        added_countries = list(set(current_countries) - set(prev_countries))
-        
+        if curr_enroll != prev_enroll:
+            changes.append(f"Enrollment: {prev_enroll} → {curr_enroll}")
+
+        # COUNTRY UPDATES
+        prev_countries = get_previous_countries(conn, nct_id)
+        added_countries = sorted(list(set(current_countries) - set(prev_countries)))
+        removed_countries = sorted(list(set(prev_countries) - set(current_countries)))
+
         if added_countries:
-            changes.append("Countries Added: " + ", ".join(sorted(added_countries)))
-        
-        # COUNTRY REMOVAL
-        removed_countries = list(set(prev_countries) - set(current_countries))
-        
+            changes.append(f"Countries Added: {', '.join(added_countries)}")
         if removed_countries:
-            changes.append("Countries Removed: " + ", ".join(sorted(removed_countries)))
-        
+            changes.append(f"Countries Removed: {', '.join(removed_countries)}")
+
         if changes:
-        
             updates.append(
-                f"[{nct_id}] {sponsor} trial in {conditions} | Phase: {current_phase}: "
-                + "; ".join(changes)
+                f"[{nct_id}] {sponsor} | {current_phase}: " + " | ".join(changes)
             )
     conn.close()
 
