@@ -217,14 +217,6 @@ if run_button:
     updates = []
     seen_trials = set()
 
-    # Helper: extract year/month
-    def year_month(d):
-        try:
-            dt = datetime.strptime(d, "%Y-%m-%d")
-            return dt.year, dt.month
-        except:
-            return None, None
-
     for study in studies:
         protocol = study.get("protocolSection", {})
         status = protocol.get("statusModule", {})
@@ -278,14 +270,11 @@ if run_button:
                     new_trials.append(trial_report)
                     seen_trials.add(nct_id)
 
-        # -------- UPDATE DETECTION -------- #
+        # -------- UPDATE DETECTION (STATUS, ENROLLMENT, COUNTRIES ONLY) -------- #
         current_status = status.get("overallStatus", "NA")
         current_phase = ", ".join(design.get("phases", [])) or "NA"
         current_enrollment = design.get("enrollmentInfo", {}).get("count")
         current_enrollment = str(current_enrollment) if current_enrollment else "NA"
-        current_start_date = status.get("startDateStruct", {}).get("date", "NA")
-        current_primary_completion = status.get("primaryCompletionDateStruct", {}).get("date", "NA")
-        current_completion = status.get("completionDateStruct", {}).get("date", "NA")
         locations = protocol.get("contactsLocationsModule", {}).get("locations", [])
         current_countries = sorted(list(set([loc.get("country") for loc in locations if loc.get("country")])))
 
@@ -295,9 +284,6 @@ if run_button:
 
         prev_status = prev["status"]
         prev_enrollment = prev["enrollment"]
-        prev_start_date = prev["start_date"]
-        prev_primary_completion = prev["primary_completion"]
-        prev_completion = prev["completion"]
         prev_countries = get_previous_countries(conn, nct_id)
 
         changes = []
@@ -308,27 +294,6 @@ if run_button:
             changes.append(f"TRIAL TERMINATED: Status changed {prev_status} → {current_status}")
         elif current_status != prev_status:
             changes.append(f"Status: {prev_status} → {current_status}")
-
-        # START DATE CHANGE
-        if str(current_start_date) != str(prev_start_date):
-            y1, m1 = year_month(prev_start_date)
-            y2, m2 = year_month(current_start_date)
-            if y1 != y2 or m1 != m2:
-                changes.append(f"Start Date: {prev_start_date} → {current_start_date}")
-
-        # PRIMARY COMPLETION CHANGE
-        if str(current_primary_completion) != str(prev_primary_completion):
-            y1, m1 = year_month(prev_primary_completion)
-            y2, m2 = year_month(current_primary_completion)
-            if y1 != y2 or m1 != m2:
-                changes.append(f"Primary Completion: {prev_primary_completion} → {current_primary_completion}")
-
-        # STUDY COMPLETION CHANGE
-        if str(current_completion) != str(prev_completion):
-            y1, m1 = year_month(prev_completion)
-            y2, m2 = year_month(current_completion)
-            if y1 != y2 or m1 != m2:
-                changes.append(f"Study Completion: {prev_completion} → {current_completion}")
 
         # ENROLLMENT CHANGE
         if current_enrollment != prev_enrollment:
