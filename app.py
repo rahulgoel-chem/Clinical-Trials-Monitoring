@@ -34,7 +34,7 @@ def get_previous_trial_data(conn, nct_id):
     cur = conn.cursor()
 
     query = """
-    SELECT status, phase, enrollment
+    SELECT overall_status, start_date, primary_completion_date, completion_date, enrollment
     FROM studies
     WHERE nct_id = %s
     """
@@ -46,7 +46,9 @@ def get_previous_trial_data(conn, nct_id):
     if row:
         return {
             "status": str(row[0]) if row[0] else "NA",
-            "phase": str(row[1]) if row[1] else "NA",
+            "start": str(row[1]) if row[1] else "NA",
+            "primary_completion": str(row[2]) if row[2] else "NA",
+            "completion": str(row[3]) if row[3] else "NA",
             "enrollment": str(row[2]) if row[2] else "NA"
         }
 
@@ -69,7 +71,19 @@ def get_previous_countries(conn, nct_id):
 
     return sorted([r[0] for r in rows if r[0]])
 
-
+    def get_current_countries(protocol):
+    
+        countries = set()
+    
+        locations = protocol.get("contactsLocationsModule",{}).get("locations",[])
+    
+        for loc in locations:
+            c = loc.get("country")
+            if c:
+                countries.add(c)
+    
+        return sorted(list(countries))
+        
 # -------- PDF UTILITIES -------- #
 
 LEFT = 60
