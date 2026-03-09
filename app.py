@@ -270,7 +270,7 @@ if run_button:
     for study in studies:
 
         protocol = study.get("protocolSection", {})
-	status = trial["protocolSection"]["statusModule"].get("overallStatus")
+        status = protocol.get("statusModule", {})
         sponsor_mod = protocol.get("sponsorCollaboratorsModule", {})
         design = protocol.get("designModule", {})
 
