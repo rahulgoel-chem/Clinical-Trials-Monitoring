@@ -34,7 +34,7 @@ def get_previous_trial_data(conn, nct_id):
     cur = conn.cursor()
 
     query = """
-    SELECT overall_status, phase, enrollment
+    SELECT status, phase, enrollment
     FROM studies
     WHERE nct_id = %s
     """
