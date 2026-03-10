@@ -17,7 +17,7 @@ AACT_USER = st.secrets["AACT_USER"]
 AACT_PASS = st.secrets["AACT_PASS"]
 
 
-# -------- DATABASE CONNECTION -------- #
+# -------- HELPER FUNCTIONS -------- #
 
 def connect_aact():
     return psycopg2.connect(
@@ -29,28 +29,17 @@ def connect_aact():
     )
 
 
-# -------- NORMALIZE DATE -------- #
-
-def normalize_date(d):
-
-    if not d or d == "NA":
-        return "NA"
-
-    return str(d)[:7]
-
-
-# -------- GET PREVIOUS SNAPSHOT -------- #
-
 def get_previous_trial_data(conn, nct_id):
 
     cur = conn.cursor()
 
     query = """
     SELECT overall_status,
+           phase,
+           enrollment,
            start_date,
            primary_completion_date,
-           completion_date,
-           enrollment
+           completion_date
     FROM studies
     WHERE nct_id = %s
     """
@@ -59,16 +48,17 @@ def get_previous_trial_data(conn, nct_id):
     row = cur.fetchone()
     cur.close()
 
-    if not row:
-        return None
+    if row:
+        return {
+            "status": str(row[0]) if row[0] else "NA",
+            "phase": str(row[1]) if row[1] else "NA",
+            "enrollment": str(row[2]) if row[2] else "NA",
+            "start_date": str(row[3]) if row[3] else "NA",
+            "primary_completion": str(row[4]) if row[4] else "NA",
+            "completion": str(row[5]) if row[5] else "NA"
+        }
 
-    return {
-        "status": str(row[0]) if row[0] else "NA",
-        "start": str(row[1]) if row[1] else "NA",
-        "primary": str(row[2]) if row[2] else "NA",
-        "completion": str(row[3]) if row[3] else "NA",
-        "enrollment": str(row[4]) if row[4] else "NA"
-    }
+    return None
 
 
 def get_previous_countries(conn, nct_id):
@@ -88,50 +78,148 @@ def get_previous_countries(conn, nct_id):
     return sorted([r[0] for r in rows if r[0]])
 
 
-# -------- NEW TRIAL DETECTION -------- #
+# -------- PDF UTILITIES -------- #
 
-def get_new_trials(conn, condition, start_date, end_date):
-
-    cur = conn.cursor()
-
-    query = """
-    SELECT DISTINCT s.nct_id,
-           s.brief_title,
-           s.phase,
-           sp.name
-    FROM studies s
-    JOIN sponsors sp ON s.nct_id = sp.nct_id
-    JOIN conditions c ON s.nct_id = c.nct_id
-    WHERE s.study_first_post_date BETWEEN %s AND %s
-    AND sp.lead_or_collaborator = 'lead'
-    AND sp.agency_class = 'INDUSTRY'
-    AND LOWER(c.name) LIKE LOWER(%s)
-    """
-
-    cur.execute(query, (start_date, end_date, f"%{condition}%"))
-
-    rows = cur.fetchall()
-
-    cur.close()
-
-    new_trials = []
-
-    for r in rows:
-
-        nct_id, title, phase, sponsor = r
-
-        phase = phase if phase else "Trial"
-
-        new_trials.append(
-            f"{sponsor} initiated a {phase} trial: {title} ({nct_id})"
-        )
-
-    return new_trials
+LEFT = 60
+RIGHT = 550
+TOP = 750
+BOTTOM = 60
 
 
-# -------- FETCH ALL TRIALS (PAGINATION) -------- #
+def add_footer(c):
+    c.setFont("Helvetica", 9)
+    page = c.getPageNumber()
+    c.drawCentredString(300, 30, f"Clinical Trial Intelligence Report | Page {page}")
 
-def fetch_all_trials(condition):
+
+def draw_wrapped_text(c, text, x, y, width=90, line_height=14):
+
+    lines = wrap(text, width)
+
+    for line in lines:
+
+        if y < BOTTOM:
+            add_footer(c)
+            c.showPage()
+            c.setFont("Helvetica", 10)
+            y = TOP
+
+        c.drawString(x, y, line)
+        y -= line_height
+
+    return y
+
+
+def draw_section_title(c, title, y, width):
+
+    c.setFont("Helvetica-Bold", 13)
+    c.drawString(50, y, title)
+
+    y -= 8
+    c.line(50, y, width - 50, y)
+
+    y -= 20
+
+    return y
+
+
+# -------- PDF GENERATOR -------- #
+
+def generate_pdf(condition, start_date, end_date, new_trials, updates):
+
+    safe_condition = condition.replace(" ", "_").lower()
+
+    file_name = f"clinical_trial_report_{safe_condition}_{start_date}_{end_date}.pdf"
+
+    c = canvas.Canvas(file_name, pagesize=letter)
+
+    width, height = letter
+    y = height - 50
+
+    c.setFont("Helvetica-Bold", 16)
+    c.drawCentredString(width / 2, y, "CLINICAL TRIAL INTELLIGENCE REPORT")
+
+    y -= 30
+
+    c.setFont("Helvetica", 11)
+    c.drawString(50, y, f"Disease: {condition}")
+
+    y -= 15
+    c.drawString(50, y, f"Monitoring Window: {start_date} to {end_date}")
+
+    y -= 15
+    c.drawString(50, y, f"Generated on: {datetime.today().date()}")
+
+    y -= 25
+    c.line(40, y, width - 40, y)
+
+    y -= 25
+
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(50, y, "SUMMARY")
+
+    y -= 10
+    c.line(50, y, width - 50, y)
+
+    y -= 20
+
+    c.setFont("Helvetica", 11)
+    c.drawString(60, y, f"Total New Trials: {len(new_trials)}")
+
+    y -= 15
+    c.drawString(60, y, f"Total Updated Trials: {len(updates)}")
+
+    y -= 30
+
+    y = draw_section_title(c, "NEW INDUSTRY TRIALS", y, width)
+
+    c.setFont("Helvetica", 10)
+
+    if not new_trials:
+        y = draw_wrapped_text(c, "No new industry trials detected.", 60, y)
+
+    else:
+        for trial in new_trials:
+            y = draw_wrapped_text(c, f"• {trial}", 60, y)
+            y -= 5
+
+    y -= 20
+
+    y = draw_section_title(c, "TRIAL UPDATES", y, width)
+
+    c.setFont("Helvetica", 10)
+
+    if not updates:
+        y = draw_wrapped_text(c, "No trial updates detected.", 60, y)
+
+    else:
+        for upd in updates:
+            y = draw_wrapped_text(c, f"• {upd}", 60, y)
+            y -= 5
+
+    add_footer(c)
+    c.save()
+
+    return file_name
+
+
+# -------- STREAMLIT UI -------- #
+
+st.title("Clinical Trial Intelligence Monitor")
+
+condition = st.text_input("Disease / Condition")
+start_date = st.date_input("Start Date")
+end_date = st.date_input("End Date")
+
+run_button = st.button("Run Analysis")
+
+
+if run_button:
+
+    st.write("Fetching trials...")
+
+    start_date_input = start_date.strftime("%Y-%m-%d")
+    end_date_input = end_date.strftime("%Y-%m-%d")
 
     base_url = "https://clinicaltrials.gov/api/v2/studies"
 
@@ -151,201 +239,35 @@ def fetch_all_trials(condition):
     }
 
     studies = []
-
-    token = None
+    next_token = None
 
     while True:
 
-        if token:
-            params["pageToken"] = token
+        if next_token:
+            params["pageToken"] = next_token
 
         response = requests.get(base_url, params=params)
-
         data = response.json()
 
         studies.extend(data.get("studies", []))
 
-        token = data.get("nextPageToken")
+        next_token = data.get("nextPageToken")
 
-        if not token:
+        if not next_token:
             break
-
-    return studies
-
-
-# -------- PDF UTILITIES -------- #
-
-BOTTOM = 60
-TOP = 750
-
-
-def add_footer(c):
-
-    c.setFont("Helvetica", 9)
-
-    page = c.getPageNumber()
-
-    c.drawCentredString(
-        300,
-        30,
-        f"Clinical Trial Intelligence Report | Page {page}"
-    )
-
-
-def draw_wrapped_text(c, text, x, y, width=90):
-
-    lines = wrap(text, width)
-
-    for line in lines:
-
-        if y < BOTTOM:
-
-            add_footer(c)
-
-            c.showPage()
-
-            c.setFont("Helvetica", 10)
-
-            y = TOP
-
-        c.drawString(x, y, line)
-
-        y -= 14
-
-    return y
-
-
-def draw_section_title(c, title, y, width):
-
-    c.setFont("Helvetica-Bold", 13)
-
-    c.drawString(50, y, title)
-
-    y -= 8
-
-    c.line(50, y, width - 50, y)
-
-    y -= 20
-
-    return y
-
-
-# -------- GENERATE PDF -------- #
-
-def generate_pdf(condition, start, end, new_trials, updates):
-
-    file_name = f"clinical_trial_report_{condition}.pdf"
-
-    c = canvas.Canvas(file_name, pagesize=letter)
-
-    width, height = letter
-
-    y = height - 50
-
-    c.setFont("Helvetica-Bold", 16)
-
-    c.drawCentredString(width/2, y, "CLINICAL TRIAL INTELLIGENCE REPORT")
-
-    y -= 40
-
-    c.setFont("Helvetica", 11)
-
-    c.drawString(50, y, f"Disease: {condition}")
-
-    y -= 15
-
-    c.drawString(50, y, f"Monitoring Window: {start} to {end}")
-
-    y -= 25
-
-    c.line(40, y, width - 40, y)
-
-    y -= 30
-
-
-    y = draw_section_title(c, "NEW INDUSTRY TRIALS", y, width)
-
-    c.setFont("Helvetica", 10)
-
-    if not new_trials:
-        y = draw_wrapped_text(c, "No new trials detected.", 60, y)
-
-    else:
-        for t in new_trials:
-            y = draw_wrapped_text(c, f"• {t}", 60, y)
-            y -= 5
-
-
-    y -= 20
-
-
-    y = draw_section_title(c, "TRIAL UPDATES", y, width)
-
-    if not updates:
-        y = draw_wrapped_text(c, "No updates detected.", 60, y)
-
-    else:
-        for u in updates:
-            y = draw_wrapped_text(c, f"• {u}", 60, y)
-            y -= 5
-
-
-    add_footer(c)
-
-    c.save()
-
-    return file_name
-
-
-# -------- STREAMLIT UI -------- #
-
-st.title("Clinical Trial Intelligence Monitor")
-
-condition = st.text_input("Disease / Condition")
-
-start_date = st.date_input("Start Date")
-
-end_date = st.date_input("End Date")
-
-run_button = st.button("Run Analysis")
-
-
-# -------- MAIN PIPELINE -------- #
-
-if run_button:
-
-    start_date_input = start_date.strftime("%Y-%m-%d")
-
-    end_date_input = end_date.strftime("%Y-%m-%d")
 
     conn = connect_aact()
 
-    new_trials = get_new_trials(
-        conn,
-        condition,
-        start_date_input,
-        end_date_input
-    )
-
-    studies = fetch_all_trials(condition)
-
+    new_trials = []
     updates = []
+    seen_trials = set()
 
     for study in studies:
 
         protocol = study.get("protocolSection", {})
-
-        ident = protocol.get("identificationModule", {})
-
         status = protocol.get("statusModule", {})
-
-        design = protocol.get("designModule", {})
-
         sponsor_mod = protocol.get("sponsorCollaboratorsModule", {})
-
-        nct_id = ident.get("nctId")
-
-        sponsor = sponsor_mod.get("leadSponsor", {}).get("name", "NA")
+        design = protocol.get("designModule", {})
 
         upd_date_str = status.get("lastUpdatePostDateStruct", {}).get("date")
 
@@ -357,11 +279,91 @@ if run_button:
         if not (start_date <= upd_date.date() <= end_date):
             continue
 
+        sponsor_class = sponsor_mod.get("leadSponsor", {}).get("class", "")
+
+        if sponsor_class.upper() != "INDUSTRY":
+            continue
+
+        ident = protocol.get("identificationModule", {})
+        nct_id = ident.get("nctId")
+        title = ident.get("briefTitle", "")
+        sponsor = sponsor_mod.get("leadSponsor", {}).get("name", "NA")
+
+        conditions = ", ".join(
+            protocol.get("conditionsModule", {}).get("conditions", [])
+        )
+
+        # -------- NEW TRIAL DETECTION -------- #
+
+        first_post_str = status.get("studyFirstPostDateStruct", {}).get("date")
+
+        if first_post_str:
+
+            first_post_date = datetime.strptime(first_post_str, "%Y-%m-%d").date()
+
+            if start_date <= first_post_date <= end_date:
+
+                phase = ", ".join(design.get("phases", [])) or "NA"
+                trial_status = status.get("overallStatus", "NA")
+
+                study_start = status.get("startDateStruct", {}).get("date", "NA")
+
+                primary_completion = status.get(
+                    "primaryCompletionDateStruct", {}
+                ).get("date", "NA")
+
+                study_completion = status.get(
+                    "completionDateStruct", {}
+                ).get("date", "NA")
+
+                enrollment = design.get(
+                    "enrollmentInfo", {}
+                ).get("count", "NA")
+
+                locations = protocol.get(
+                    "contactsLocationsModule", {}
+                ).get("locations", [])
+
+                countries = sorted(list(set([
+                    loc.get("country") for loc in locations if loc.get("country")
+                ])))
+
+                countries_text = ", ".join(countries) if countries else "NA"
+
+                trial_report = (
+                    f"[{nct_id}] {sponsor} started NEW trial: {title} | "
+                    f"Status: {trial_status} | "
+                    f"Phase: {phase} | "
+                    f"Start: {study_start} | "
+                    f"Primary Completion: {primary_completion} | "
+                    f"Study Completion: {study_completion} | "
+                    f"Enrollment: {enrollment} | "
+                    f"Countries: {countries_text}"
+                )
+
+                if nct_id not in seen_trials:
+                    new_trials.append(trial_report)
+                    seen_trials.add(nct_id)
+
+        # -------- UPDATED TRIAL DETECTION -------- #
+
+        if nct_id in seen_trials:
+            continue
+
+        prev = get_previous_trial_data(conn, nct_id)
+
+        if not prev:
+            continue
+
         current_status = status.get("overallStatus", "NA")
+        current_phase = ", ".join(design.get("phases", [])) or "NA"
 
-        current_start = status.get("startDateStruct", {}).get("date", "NA")
+        current_enrollment = design.get("enrollmentInfo", {}).get("count")
+        current_enrollment = str(current_enrollment) if current_enrollment else "NA"
 
-        current_primary = status.get(
+        current_start_date = status.get("startDateStruct", {}).get("date", "NA")
+
+        current_primary_completion = status.get(
             "primaryCompletionDateStruct", {}
         ).get("date", "NA")
 
@@ -369,64 +371,66 @@ if run_button:
             "completionDateStruct", {}
         ).get("date", "NA")
 
-        enrollment = design.get("enrollmentInfo", {}).get("count")
-
-        current_enrollment = str(enrollment) if enrollment else "NA"
-
         locations = protocol.get("contactsLocationsModule", {}).get("locations", [])
 
         current_countries = sorted(list(set([
             loc.get("country") for loc in locations if loc.get("country")
         ])))
 
-        prev = get_previous_trial_data(conn, nct_id)
-
-        if not prev:
-            continue
+        prev_status = prev["status"]
+        prev_enrollment = prev["enrollment"]
+        prev_start_date = prev["start_date"]
+        prev_primary_completion = prev["primary_completion"]
+        prev_completion = prev["completion"]
 
         prev_countries = get_previous_countries(conn, nct_id)
 
         changes = []
 
-        if current_status != prev["status"]:
-            changes.append(f"Status: {prev['status']} → {current_status}")
+        if current_status != prev_status:
+            changes.append(f"Status: {prev_status} → {current_status}")
 
-        if normalize_date(current_start) != normalize_date(prev["start"]):
-            changes.append(f"Start Date: {prev['start']} → {current_start}")
+        if str(current_start_date) != str(prev_start_date):
+            changes.append(f"Start Date: {prev_start_date} → {current_start_date}")
 
-        if normalize_date(current_primary) != normalize_date(prev["primary"]):
+        if str(current_primary_completion) != str(prev_primary_completion):
             changes.append(
-                f"Primary Completion: {prev['primary']} → {current_primary}"
+                f"Primary Completion Date: {prev_primary_completion} → {current_primary_completion}"
             )
 
-        if normalize_date(current_completion) != normalize_date(prev["completion"]):
+        if str(current_completion) != str(prev_completion):
             changes.append(
-                f"Completion Date: {prev['completion']} → {current_completion}"
+                f"Study Completion Date: {prev_completion} → {current_completion}"
             )
 
-        if current_enrollment != prev["enrollment"]:
+        if current_enrollment != prev_enrollment:
             changes.append(
-                f"Enrollment: {prev['enrollment']} → {current_enrollment}"
+                f"Enrollment: {prev_enrollment} → {current_enrollment}"
             )
 
-        added = list(set(current_countries) - set(prev_countries))
+        added_countries = list(set(current_countries) - set(prev_countries))
 
-        removed = list(set(prev_countries) - set(current_countries))
+        if added_countries:
+            changes.append("Countries Added: " + ", ".join(sorted(added_countries)))
 
-        if added:
-            changes.append("Countries Added: " + ", ".join(added))
+        removed_countries = list(set(prev_countries) - set(current_countries))
 
-        if removed:
-            changes.append("Countries Removed: " + ", ".join(removed))
+        if removed_countries:
+            changes.append("Countries Removed: " + ", ".join(sorted(removed_countries)))
 
         if changes:
-            updates.append(
-                f"{sponsor}'s trial ({nct_id}) updated: " + "; ".join(changes)
+
+            update_text = (
+                f"{current_phase}: {sponsor} trial evaluating {title} in {conditions} "
+                f"has been updated. " + "; ".join(changes)
             )
+
+            updates.append(update_text)
 
     conn.close()
 
-    st.success(f"New Trials: {len(new_trials)} | Updates: {len(updates)}")
+    st.success(f"Total New Trials: {len(new_trials)}")
+    st.success(f"Total Updates: {len(updates)}")
 
     file_name = generate_pdf(
         condition,
