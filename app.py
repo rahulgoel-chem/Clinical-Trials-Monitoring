@@ -17,11 +17,11 @@ AACT_USER = st.secrets["AACT_USER"]
 AACT_PASS = st.secrets["AACT_PASS"]
 
 
-# -------- PDF -------- #
+# -------- PDF FUNCTION -------- #
 
-def generate_pdf(condition, start_date, end_date, new_trials, updates):
+def generate_pdf(condition, start, end, new_trials, updates):
 
-    filename = f"trial_report_{condition}_{start_date}_{end_date}.pdf"
+    filename = f"trial_report_{condition}_{start}_{end}.pdf"
     c = canvas.Canvas(filename, pagesize=letter)
 
     y = 750
@@ -33,10 +33,8 @@ def generate_pdf(condition, start_date, end_date, new_trials, updates):
 
     c.setFont("Helvetica", 11)
     c.drawString(60, y, f"Disease: {condition}")
-
     y -= 15
-    c.drawString(60, y, f"Monitoring Window: {start_date} → {end_date}")
-
+    c.drawString(60, y, f"Monitoring Window: {start} → {end}")
     y -= 15
     c.drawString(60, y, f"Generated: {datetime.today().date()}")
 
@@ -46,7 +44,6 @@ def generate_pdf(condition, start_date, end_date, new_trials, updates):
     c.drawString(60, y, "SUMMARY")
 
     y -= 20
-
     c.setFont("Helvetica", 11)
     c.drawString(70, y, f"New Trials: {len(new_trials)}")
 
@@ -55,62 +52,45 @@ def generate_pdf(condition, start_date, end_date, new_trials, updates):
 
     y -= 40
 
-    # NEW TRIALS
-
     c.setFont("Helvetica-Bold", 12)
     c.drawString(60, y, "NEW INDUSTRY TRIALS")
 
     y -= 20
-
     c.setFont("Helvetica", 10)
 
-    if not new_trials:
-        c.drawString(70, y, "No new trials detected.")
-        y -= 15
+    for trial in new_trials:
 
-    else:
+        for line in wrap(trial, 90):
 
-        for trial in new_trials:
+            if y < 60:
+                c.showPage()
+                y = 750
 
-            for line in wrap(trial, 90):
+            c.drawString(70, y, line)
+            y -= 14
 
-                if y < 60:
-                    c.showPage()
-                    y = 750
-
-                c.drawString(70, y, line)
-                y -= 14
-
-            y -= 6
+        y -= 6
 
     y -= 20
-
-    # UPDATES
 
     c.setFont("Helvetica-Bold", 12)
     c.drawString(60, y, "TRIAL UPDATES")
 
     y -= 20
-
     c.setFont("Helvetica", 10)
 
-    if not updates:
-        c.drawString(70, y, "No updates detected.")
+    for upd in updates:
 
-    else:
+        for line in wrap(upd, 90):
 
-        for upd in updates:
+            if y < 60:
+                c.showPage()
+                y = 750
 
-            for line in wrap(upd, 90):
+            c.drawString(70, y, line)
+            y -= 14
 
-                if y < 60:
-                    c.showPage()
-                    y = 750
-
-                c.drawString(70, y, line)
-                y -= 14
-
-            y -= 6
+        y -= 6
 
     c.save()
 
@@ -139,6 +119,7 @@ if run:
 
     seen_nct = set()
 
+
     # -------- NEW TRIALS FROM AACT -------- #
 
     conn = psycopg2.connect(
@@ -155,7 +136,7 @@ if run:
     SELECT DISTINCT
         s.nct_id,
         s.brief_title,
-        sp.name,
+        sp.agency,
         s.study_first_post_date
     FROM studies s
     JOIN sponsors sp
@@ -164,8 +145,8 @@ if run:
         ON s.nct_id = c.nct_id
     WHERE
         LOWER(c.name) LIKE %s
-        AND sp.lead_or_collaborator='lead'
-        AND sp.agency_class='INDUSTRY'
+        AND sp.lead_or_collaborator = 'lead'
+        AND sp.agency_class = 'INDUSTRY'
         AND s.study_first_post_date BETWEEN %s AND %s
     """
 
@@ -186,18 +167,38 @@ if run:
     cur.close()
     conn.close()
 
-    # -------- UPDATES FROM CLINICALTRIALS API -------- #
 
-    url = "https://clinicaltrials.gov/api/v2/studies"
+    # -------- CLINICALTRIALS API WITH PAGINATION -------- #
+
+    base_url = "https://clinicaltrials.gov/api/v2/studies"
 
     params = {
         "query.cond": condition,
         "pageSize": 1000
     }
 
-    response = requests.get(url, params=params)
+    studies = []
 
-    studies = response.json().get("studies", [])
+    next_page_token = None
+
+    while True:
+
+        if next_page_token:
+            params["pageToken"] = next_page_token
+
+        response = requests.get(base_url, params=params)
+
+        data = response.json()
+
+        studies.extend(data.get("studies", []))
+
+        next_page_token = data.get("nextPageToken")
+
+        if not next_page_token:
+            break
+
+
+    # -------- PROCESS STUDIES -------- #
 
     for study in studies:
 
@@ -244,9 +245,9 @@ if run:
 
         locations = locations_mod.get("locations", [])
 
-        countries = sorted(set([
+        countries = sorted(set(
             loc.get("country") for loc in locations if loc.get("country")
-        ]))
+        ))
 
         countries_text = ", ".join(countries) if countries else "NA"
 
@@ -264,16 +265,11 @@ if run:
 
         seen_nct.add(nct_id)
 
+
     st.success(f"New Trials: {len(new_trials)}")
     st.success(f"Updated Trials: {len(updates)}")
 
-    pdf_file = generate_pdf(
-        condition,
-        start,
-        end,
-        new_trials,
-        updates
-    )
+    pdf_file = generate_pdf(condition, start, end, new_trials, updates)
 
     with open(pdf_file, "rb") as f:
 
