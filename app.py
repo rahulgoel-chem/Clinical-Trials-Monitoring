@@ -335,14 +335,45 @@ if run_button:
 
     # -------- NEW TRIALS (UNCHANGED) -------- #
 
-    new_trials = get_new_trials(
-        conn,
-        condition,
-        start_date_input,
-        end_date_input
-    )
+    def get_new_trials(conn, condition, start_date, end_date):
 
+    cur = conn.cursor()
 
+    query = """
+    SELECT DISTINCT s.nct_id,
+           s.brief_title,
+           s.phase,
+           sp.name
+    FROM studies s
+    JOIN sponsors sp ON s.nct_id = sp.nct_id
+    JOIN conditions c ON s.nct_id = c.nct_id
+    WHERE s.study_first_post_date BETWEEN %s AND %s
+    AND sp.lead_or_collaborator = 'lead'
+    AND sp.agency_class = 'INDUSTRY'
+    AND LOWER(c.name) LIKE LOWER(%s)
+    """
+
+    cur.execute(query, (start_date, end_date, f"%{condition}%"))
+
+    rows = cur.fetchall()
+
+    cur.close()
+
+    new_trials = []
+
+    for r in rows:
+
+        nct_id, title, phase, sponsor = r
+
+        phase = phase if phase else "Trial"
+
+        new_trials.append(
+
+            f"{sponsor} initiated a {phase} trial: {title} ({nct_id})"
+
+        )
+
+    return new_trials
     # -------- FETCH ALL TRIALS -------- #
 
     studies = fetch_all_trials(condition)
