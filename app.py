@@ -17,7 +17,7 @@ AACT_USER = st.secrets["AACT_USER"]
 AACT_PASS = st.secrets["AACT_PASS"]
 
 
-# -------- PDF FUNCTION -------- #
+# -------- PDF GENERATION -------- #
 
 def generate_pdf(condition, start, end, new_trials, updates):
 
@@ -30,28 +30,21 @@ def generate_pdf(condition, start, end, new_trials, updates):
     c.drawCentredString(300, y, "CLINICAL TRIAL INTELLIGENCE REPORT")
 
     y -= 40
-
     c.setFont("Helvetica", 11)
+
     c.drawString(60, y, f"Disease: {condition}")
     y -= 15
     c.drawString(60, y, f"Monitoring Window: {start} → {end}")
     y -= 15
     c.drawString(60, y, f"Generated: {datetime.today().date()}")
 
-    y -= 30
-
-    c.setFont("Helvetica-Bold", 12)
-    c.drawString(60, y, "SUMMARY")
-
-    y -= 20
-    c.setFont("Helvetica", 11)
-    c.drawString(70, y, f"New Trials: {len(new_trials)}")
-
-    y -= 15
-    c.drawString(70, y, f"Updated Trials: {len(updates)}")
-
     y -= 40
 
+    c.drawString(60, y, f"New Trials: {len(new_trials)}")
+    y -= 20
+    c.drawString(60, y, f"Updated Trials: {len(updates)}")
+
+    y -= 40
     c.setFont("Helvetica-Bold", 12)
     c.drawString(60, y, "NEW INDUSTRY TRIALS")
 
@@ -71,8 +64,7 @@ def generate_pdf(condition, start, end, new_trials, updates):
 
         y -= 6
 
-    y -= 20
-
+    y -= 30
     c.setFont("Helvetica-Bold", 12)
     c.drawString(60, y, "TRIAL UPDATES")
 
@@ -116,10 +108,10 @@ if run:
 
     new_trials = []
     updates = []
-
     seen_nct = set()
 
-    # -------- AACT NEW TRIALS -------- #
+
+    # -------- AACT DATABASE (NEW TRIALS) -------- #
 
     conn = psycopg2.connect(
         host=AACT_HOST,
@@ -135,7 +127,7 @@ if run:
     SELECT DISTINCT
         s.nct_id,
         s.brief_title,
-        sp.name,
+        sp.agency,
         s.study_first_post_date
     FROM studies s
     JOIN sponsors sp
@@ -143,7 +135,7 @@ if run:
     JOIN conditions c
         ON s.nct_id = c.nct_id
     WHERE
-        c.downcase_name LIKE %s
+        LOWER(c.name) LIKE %s
         AND sp.lead_or_collaborator = 'lead'
         AND sp.agency_class = 'INDUSTRY'
         AND s.study_first_post_date BETWEEN %s AND %s
@@ -165,6 +157,7 @@ if run:
 
     cur.close()
     conn.close()
+
 
     # -------- CLINICALTRIALS API PAGINATION -------- #
 
@@ -193,6 +186,7 @@ if run:
 
         if not next_token:
             break
+
 
     # -------- UPDATE DETECTION -------- #
 
@@ -230,13 +224,9 @@ if run:
             continue
 
         trial_status = status.get("overallStatus", "NA")
-
         start_trial = status.get("startDateStruct", {}).get("date", "NA")
-
         primary = status.get("primaryCompletionDateStruct", {}).get("date", "NA")
-
         completion = status.get("completionDateStruct", {}).get("date", "NA")
-
         enrollment = design.get("enrollmentInfo", {}).get("count", "NA")
 
         locations = locations_mod.get("locations", [])
@@ -260,6 +250,7 @@ if run:
         updates.append(report)
 
         seen_nct.add(nct_id)
+
 
     st.success(f"New Trials: {len(new_trials)}")
     st.success(f"Updated Trials: {len(updates)}")
