@@ -78,6 +78,21 @@ def get_previous_countries(conn, nct_id):
     return sorted([r[0] for r in rows if r[0]])
 
 
+# -------- DATE COMPARISON (IGNORE PARTIAL DATE CHANGES) -------- #
+
+def same_year_month(date1, date2):
+
+    if not date1 or not date2:
+        return False
+
+    try:
+        ym1 = str(date1)[:7]
+        ym2 = str(date2)[:7]
+        return ym1 == ym2
+    except:
+        return False
+
+
 # -------- PDF UTILITIES -------- #
 
 LEFT = 60
@@ -356,7 +371,6 @@ if run_button:
             continue
 
         current_status = status.get("overallStatus", "NA")
-        current_phase = ", ".join(design.get("phases", [])) or "NA"
 
         current_enrollment = design.get("enrollmentInfo", {}).get("count")
         current_enrollment = str(current_enrollment) if current_enrollment else "NA"
@@ -390,18 +404,21 @@ if run_button:
         if current_status != prev_status:
             changes.append(f"Status: {prev_status} → {current_status}")
 
-        if str(current_start_date) != str(prev_start_date):
-            changes.append(f"Start Date: {prev_start_date} → {current_start_date}")
+        if not same_year_month(current_start_date, prev_start_date):
+            if str(current_start_date) != str(prev_start_date):
+                changes.append(f"Start Date: {prev_start_date} → {current_start_date}")
 
-        if str(current_primary_completion) != str(prev_primary_completion):
-            changes.append(
-                f"Primary Completion Date: {prev_primary_completion} → {current_primary_completion}"
-            )
+        if not same_year_month(current_primary_completion, prev_primary_completion):
+            if str(current_primary_completion) != str(prev_primary_completion):
+                changes.append(
+                    f"Primary Completion Date: {prev_primary_completion} → {current_primary_completion}"
+                )
 
-        if str(current_completion) != str(prev_completion):
-            changes.append(
-                f"Study Completion Date: {prev_completion} → {current_completion}"
-            )
+        if not same_year_month(current_completion, prev_completion):
+            if str(current_completion) != str(prev_completion):
+                changes.append(
+                    f"Study Completion Date: {prev_completion} → {current_completion}"
+                )
 
         if current_enrollment != prev_enrollment:
             changes.append(
@@ -421,7 +438,7 @@ if run_button:
         if changes:
 
             update_text = (
-                f"{current_phase}: {sponsor} trial evaluating {title} in {conditions} "
+                f"[{nct_id}] {sponsor} trial evaluating {title} in {conditions} "
                 f"has been updated. " + "; ".join(changes)
             )
 
