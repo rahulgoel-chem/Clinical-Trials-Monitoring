@@ -1,14 +1,13 @@
 import streamlit as st
 import requests
-from datetime import datetime
 import psycopg2
-
+from datetime import datetime
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 from textwrap import wrap
 
 
-# ---------- CONFIG ---------- #
+# ---------------- CONFIG ---------------- #
 
 AACT_HOST = st.secrets["AACT_HOST"]
 AACT_DB = st.secrets["AACT_DB"]
@@ -17,17 +16,17 @@ AACT_USER = st.secrets["AACT_USER"]
 AACT_PASS = st.secrets["AACT_PASS"]
 
 
-# ---------- PDF FUNCTION ---------- #
+# ---------------- PDF GENERATOR ---------------- #
 
 def generate_pdf(condition, start, end, new_trials, updates):
 
-    filename = f"trial_report_{condition}_{start}_{end}.pdf"
+    filename = f"trial_report_{condition}.pdf"
     c = canvas.Canvas(filename, pagesize=letter)
 
     y = 750
 
     c.setFont("Helvetica-Bold", 16)
-    c.drawCentredString(300, y, "CLINICAL TRIAL INTELLIGENCE REPORT")
+    c.drawCentredString(300, y, "CLINICAL TRIAL MONITORING REPORT")
 
     y -= 40
     c.setFont("Helvetica", 11)
@@ -40,10 +39,10 @@ def generate_pdf(condition, start, end, new_trials, updates):
 
     y -= 30
     c.drawString(60, y, f"New Trials: {len(new_trials)}")
-    y -= 20
+    y -= 15
     c.drawString(60, y, f"Updated Trials: {len(updates)}")
 
-    y -= 40
+    y -= 30
 
     c.setFont("Helvetica-Bold", 12)
     c.drawString(60, y, "NEW TRIALS")
@@ -67,14 +66,14 @@ def generate_pdf(condition, start, end, new_trials, updates):
     y -= 30
 
     c.setFont("Helvetica-Bold", 12)
-    c.drawString(60, y, "TRIAL UPDATES")
+    c.drawString(60, y, "UPDATED TRIALS")
 
     y -= 20
     c.setFont("Helvetica", 10)
 
-    for upd in updates:
+    for trial in updates:
 
-        for line in wrap(upd, 90):
+        for line in wrap(trial, 90):
 
             if y < 60:
                 c.showPage()
@@ -90,7 +89,7 @@ def generate_pdf(condition, start, end, new_trials, updates):
     return filename
 
 
-# ---------- STREAMLIT UI ---------- #
+# ---------------- STREAMLIT UI ---------------- #
 
 st.title("Clinical Trial Intelligence Monitor")
 
@@ -109,11 +108,9 @@ if run:
 
     new_trials = []
     updates = []
-
     seen_nct = set()
 
-
-    # ---------- AACT NEW TRIALS ---------- #
+    # ---------------- AACT DATABASE CONNECTION ---------------- #
 
     conn = psycopg2.connect(
         host=AACT_HOST,
@@ -125,19 +122,20 @@ if run:
 
     cur = conn.cursor()
 
+    # -------- BULLETPROOF AACT QUERY -------- #
+
     query = """
     SELECT DISTINCT
         s.nct_id,
         s.brief_title,
-        s.study_first_post_date
+        s.study_first_post_date,
+        sp.name
     FROM studies s
     JOIN sponsors sp
         ON s.nct_id = sp.nct_id
-    JOIN conditions c
-        ON s.nct_id = c.nct_id
     WHERE
-        LOWER(c.name) LIKE %s
-        AND sp.agency_class = 'INDUSTRY'
+        LOWER(COALESCE(s.conditions,'')) LIKE %s
+        AND sp.lead_or_collaborator = 'lead'
         AND s.study_first_post_date BETWEEN %s AND %s
     """
 
@@ -147,11 +145,11 @@ if run:
 
     for r in rows:
 
-        nct_id, title, post_date = r
+        nct_id, title, post_date, sponsor = r
 
         seen_nct.add(nct_id)
 
-        report = f"[{nct_id}] NEW trial registered: {title}"
+        report = f"[{nct_id}] {sponsor} registered a new trial: {title}"
 
         new_trials.append(report)
 
@@ -159,7 +157,7 @@ if run:
     conn.close()
 
 
-    # ---------- CLINICALTRIALS API PAGINATION ---------- #
+    # ---------------- CLINICALTRIALS API ---------------- #
 
     base_url = "https://clinicaltrials.gov/api/v2/studies"
 
@@ -188,7 +186,7 @@ if run:
             break
 
 
-    # ---------- UPDATE DETECTION ---------- #
+    # ---------------- UPDATE DETECTION ---------------- #
 
     for study in studies:
 
@@ -223,25 +221,44 @@ if run:
         if not (start_date <= update_date <= end_date):
             continue
 
+
+        # ----- FIELDS YOU REQUESTED -----
+
         trial_status = status.get("overallStatus", "NA")
+
         start_trial = status.get("startDateStruct", {}).get("date", "NA")
-        primary = status.get("primaryCompletionDateStruct", {}).get("date", "NA")
-        completion = status.get("completionDateStruct", {}).get("date", "NA")
-        enrollment = design.get("enrollmentInfo", {}).get("count", "NA")
+
+        primary_completion = status.get(
+            "primaryCompletionDateStruct", {}
+        ).get("date", "NA")
+
+        completion = status.get(
+            "completionDateStruct", {}
+        ).get("date", "NA")
+
+        enrollment = design.get(
+            "enrollmentInfo", {}
+        ).get("count", "NA")
+
+
+        # ----- COUNTRIES -----
 
         locations = locations_mod.get("locations", [])
 
         countries = sorted(set(
-            loc.get("country") for loc in locations if loc.get("country")
+            loc.get("country")
+            for loc in locations
+            if loc.get("country")
         ))
 
         countries_text = ", ".join(countries) if countries else "NA"
+
 
         report = (
             f"[{nct_id}] {sponsor} trial updated: {title} | "
             f"Status: {trial_status} | "
             f"Start: {start_trial} | "
-            f"Primary Completion: {primary} | "
+            f"Primary Completion: {primary_completion} | "
             f"Study Completion: {completion} | "
             f"Enrollment: {enrollment} | "
             f"Countries: {countries_text}"
@@ -252,8 +269,10 @@ if run:
         seen_nct.add(nct_id)
 
 
-    st.success(f"New Trials: {len(new_trials)}")
-    st.success(f"Updated Trials: {len(updates)}")
+    # ---------------- RESULTS ---------------- #
+
+    st.success(f"New Trials Detected: {len(new_trials)}")
+    st.success(f"Updated Trials Detected: {len(updates)}")
 
     pdf_file = generate_pdf(condition, start, end, new_trials, updates)
 
