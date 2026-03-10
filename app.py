@@ -8,7 +8,7 @@ from reportlab.pdfgen import canvas
 from textwrap import wrap
 
 
-# -------- CONFIG -------- #
+# ---------- CONFIG ---------- #
 
 AACT_HOST = st.secrets["AACT_HOST"]
 AACT_DB = st.secrets["AACT_DB"]
@@ -17,7 +17,7 @@ AACT_USER = st.secrets["AACT_USER"]
 AACT_PASS = st.secrets["AACT_PASS"]
 
 
-# -------- PDF GENERATION -------- #
+# ---------- PDF FUNCTION ---------- #
 
 def generate_pdf(condition, start, end, new_trials, updates):
 
@@ -38,15 +38,15 @@ def generate_pdf(condition, start, end, new_trials, updates):
     y -= 15
     c.drawString(60, y, f"Generated: {datetime.today().date()}")
 
-    y -= 40
-
+    y -= 30
     c.drawString(60, y, f"New Trials: {len(new_trials)}")
     y -= 20
     c.drawString(60, y, f"Updated Trials: {len(updates)}")
 
     y -= 40
+
     c.setFont("Helvetica-Bold", 12)
-    c.drawString(60, y, "NEW INDUSTRY TRIALS")
+    c.drawString(60, y, "NEW TRIALS")
 
     y -= 20
     c.setFont("Helvetica", 10)
@@ -65,6 +65,7 @@ def generate_pdf(condition, start, end, new_trials, updates):
         y -= 6
 
     y -= 30
+
     c.setFont("Helvetica-Bold", 12)
     c.drawString(60, y, "TRIAL UPDATES")
 
@@ -89,7 +90,7 @@ def generate_pdf(condition, start, end, new_trials, updates):
     return filename
 
 
-# -------- STREAMLIT UI -------- #
+# ---------- STREAMLIT UI ---------- #
 
 st.title("Clinical Trial Intelligence Monitor")
 
@@ -108,10 +109,11 @@ if run:
 
     new_trials = []
     updates = []
+
     seen_nct = set()
 
 
-    # -------- AACT DATABASE (NEW TRIALS) -------- #
+    # ---------- AACT NEW TRIALS ---------- #
 
     conn = psycopg2.connect(
         host=AACT_HOST,
@@ -127,7 +129,6 @@ if run:
     SELECT DISTINCT
         s.nct_id,
         s.brief_title,
-        sp.agency,
         s.study_first_post_date
     FROM studies s
     JOIN sponsors sp
@@ -136,7 +137,6 @@ if run:
         ON s.nct_id = c.nct_id
     WHERE
         LOWER(c.name) LIKE %s
-        AND sp.lead_or_collaborator = 'lead'
         AND sp.agency_class = 'INDUSTRY'
         AND s.study_first_post_date BETWEEN %s AND %s
     """
@@ -147,11 +147,11 @@ if run:
 
     for r in rows:
 
-        nct_id, title, sponsor, post_date = r
+        nct_id, title, post_date = r
 
         seen_nct.add(nct_id)
 
-        report = f"[{nct_id}] {sponsor} started NEW trial: {title}"
+        report = f"[{nct_id}] NEW trial registered: {title}"
 
         new_trials.append(report)
 
@@ -159,7 +159,7 @@ if run:
     conn.close()
 
 
-    # -------- CLINICALTRIALS API PAGINATION -------- #
+    # ---------- CLINICALTRIALS API PAGINATION ---------- #
 
     base_url = "https://clinicaltrials.gov/api/v2/studies"
 
@@ -188,7 +188,7 @@ if run:
             break
 
 
-    # -------- UPDATE DETECTION -------- #
+    # ---------- UPDATE DETECTION ---------- #
 
     for study in studies:
 
