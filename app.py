@@ -21,6 +21,7 @@ AACT_PASS = st.secrets["AACT_PASS"]
 def generate_pdf(condition, start, end, new_trials, updates):
 
     filename = f"trial_report_{condition}.pdf"
+
     c = canvas.Canvas(filename, pagesize=letter)
 
     y = 750
@@ -110,7 +111,8 @@ if run:
     updates = []
     seen_nct = set()
 
-    # ---------------- AACT DATABASE CONNECTION ---------------- #
+
+    # ---------------- AACT: GET EXISTING NCT IDS ONLY ---------------- #
 
     conn = psycopg2.connect(
         host=AACT_HOST,
@@ -122,42 +124,17 @@ if run:
 
     cur = conn.cursor()
 
-    # -------- BULLETPROOF AACT QUERY -------- #
-
-    query = """
-    SELECT DISTINCT
-        s.nct_id,
-        s.brief_title,
-        s.study_first_post_date,
-        sp.name
-    FROM studies s
-    JOIN sponsors sp
-        ON s.nct_id = sp.nct_id
-    WHERE
-        LOWER(COALESCE(s.conditions,'')) LIKE %s
-        AND sp.lead_or_collaborator = 'lead'
-        AND s.study_first_post_date BETWEEN %s AND %s
-    """
-
-    cur.execute(query, (f"%{condition.lower()}%", start, end))
+    cur.execute("SELECT nct_id FROM studies")
 
     rows = cur.fetchall()
 
-    for r in rows:
-
-        nct_id, title, post_date, sponsor = r
-
-        seen_nct.add(nct_id)
-
-        report = f"[{nct_id}] {sponsor} registered a new trial: {title}"
-
-        new_trials.append(report)
+    existing_trials = set(r[0] for r in rows)
 
     cur.close()
     conn.close()
 
 
-    # ---------------- CLINICALTRIALS API ---------------- #
+    # ---------------- CLINICALTRIALS API PAGINATION ---------------- #
 
     base_url = "https://clinicaltrials.gov/api/v2/studies"
 
@@ -186,7 +163,7 @@ if run:
             break
 
 
-    # ---------------- UPDATE DETECTION ---------------- #
+    # ---------------- PROCESS STUDIES ---------------- #
 
     for study in studies:
 
@@ -203,13 +180,30 @@ if run:
         if sponsor_class != "INDUSTRY":
             continue
 
+
         nct_id = ident.get("nctId")
 
-        if not nct_id or nct_id in seen_nct:
+        if not nct_id:
             continue
 
         title = ident.get("briefTitle", "")
         sponsor = sponsor_mod.get("leadSponsor", {}).get("name", "")
+
+
+        # ---------- NEW TRIAL DETECTION ---------- #
+
+        if nct_id not in existing_trials:
+
+            report = f"[{nct_id}] {sponsor} registered new trial: {title}"
+
+            new_trials.append(report)
+
+            seen_nct.add(nct_id)
+
+            continue
+
+
+        # ---------- UPDATE DETECTION ---------- #
 
         update_date = status.get("lastUpdatePostDateStruct", {}).get("date")
 
@@ -221,8 +215,6 @@ if run:
         if not (start_date <= update_date <= end_date):
             continue
 
-
-        # ----- FIELDS YOU REQUESTED -----
 
         trial_status = status.get("overallStatus", "NA")
 
@@ -240,8 +232,6 @@ if run:
             "enrollmentInfo", {}
         ).get("count", "NA")
 
-
-        # ----- COUNTRIES -----
 
         locations = locations_mod.get("locations", [])
 
@@ -271,8 +261,9 @@ if run:
 
     # ---------------- RESULTS ---------------- #
 
-    st.success(f"New Trials Detected: {len(new_trials)}")
-    st.success(f"Updated Trials Detected: {len(updates)}")
+    st.success(f"New Trials: {len(new_trials)}")
+    st.success(f"Updated Trials: {len(updates)}")
+
 
     pdf_file = generate_pdf(condition, start, end, new_trials, updates)
 
