@@ -30,10 +30,39 @@ def connect_aact():
 
 
 def normalize_date(d):
-    """Normalize dates so YYYY-MM and YYYY-MM-DD don't create false updates"""
+    """Avoid false updates like 2030-07-31 → 2030-07"""
     if not d or d == "NA":
         return "NA"
-    return str(d)[:7]   # compare only YYYY-MM
+    return str(d)[:7]
+
+
+def classify_status_change(prev_status, current_status):
+
+    prev = prev_status.upper()
+    curr = current_status.upper()
+
+    if prev == curr:
+        return None
+
+    if curr == "COMPLETED":
+        return f"TRIAL COMPLETED: {prev_status} → {current_status}"
+
+    if curr == "TERMINATED":
+        return f"TRIAL TERMINATED: {prev_status} → {current_status}"
+
+    if curr == "SUSPENDED":
+        return f"TRIAL SUSPENDED: {prev_status} → {current_status}"
+
+    if curr == "WITHDRAWN":
+        return f"TRIAL WITHDRAWN: {prev_status} → {current_status}"
+
+    if prev == "RECRUITING" and curr == "ACTIVE, NOT RECRUITING":
+        return "ENROLLMENT COMPLETED"
+
+    if prev == "NOT YET RECRUITING" and curr == "RECRUITING":
+        return "TRIAL STARTED RECRUITING"
+
+    return f"Status Change: {prev_status} → {current_status}"
 
 
 def get_previous_trial_data(conn, nct_id):
@@ -184,11 +213,9 @@ def generate_pdf(condition, start_date, end_date, new_trials, updates):
 
     if not new_trials:
         y = draw_wrapped_text(c, "No new industry trials detected.", 60, y)
-
     else:
         for trial in new_trials:
-            trial_text = f"• {trial}"
-            y = draw_wrapped_text(c, trial_text, 60, y)
+            y = draw_wrapped_text(c, f"• {trial}", 60, y)
             y -= 5
 
     y -= 20
@@ -199,11 +226,9 @@ def generate_pdf(condition, start_date, end_date, new_trials, updates):
 
     if not updates:
         y = draw_wrapped_text(c, "No trial updates detected.", 60, y)
-
     else:
         for upd in updates:
-            upd_text = f"• {upd}"
-            y = draw_wrapped_text(c, upd_text, 60, y)
+            y = draw_wrapped_text(c, f"• {upd}", 60, y)
             y -= 5
 
     add_footer(c)
@@ -257,7 +282,6 @@ if run_button:
         data = response.json()
 
         studies.extend(data.get("studies", []))
-
         next_token = data.get("nextPageToken")
 
         if not next_token:
@@ -294,7 +318,6 @@ if run_button:
         ident = protocol.get("identificationModule", {})
         nct_id = ident.get("nctId")
         title = ident.get("briefTitle", "")
-
         sponsor = sponsor_mod.get("leadSponsor", {}).get("name", "NA")
 
         conditions = ", ".join(
@@ -302,6 +325,7 @@ if run_button:
         )
 
         # -------- NEW TRIAL DETECTION (UNCHANGED) -------- #
+
         first_post_str = status.get("studyFirstPostDateStruct", {}).get("date")
 
         if first_post_str:
@@ -311,9 +335,7 @@ if run_button:
             if start_date <= first_post_date <= end_date:
 
                 phase = ", ".join(design.get("phases", [])) or "NA"
-
                 trial_status = status.get("overallStatus", "NA")
-
                 study_start = status.get("startDateStruct", {}).get("date", "NA")
 
                 primary_completion = status.get(
@@ -324,9 +346,7 @@ if run_button:
                     "completionDateStruct", {}
                 ).get("date", "NA")
 
-                enrollment = design.get(
-                    "enrollmentInfo", {}
-                ).get("count", "NA")
+                enrollment = design.get("enrollmentInfo", {}).get("count", "NA")
 
                 locations = protocol.get(
                     "contactsLocationsModule", {}
@@ -353,7 +373,7 @@ if run_button:
                     new_trials.append(trial_report)
                     seen_trials.add(nct_id)
 
-        # -------- UPDATE DETECTION (FIXED) -------- #
+        # -------- UPDATE DETECTION -------- #
 
         prev = get_previous_trial_data(conn, nct_id)
 
@@ -380,8 +400,10 @@ if run_button:
 
         changes = []
 
-        if current_status != prev["status"]:
-            changes.append(f"Status: {prev['status']} → {current_status}")
+        status_event = classify_status_change(prev["status"], current_status)
+
+        if status_event:
+            changes.append(status_event)
 
         if current_phase != prev["phase"]:
             changes.append(f"Phase: {prev['phase']} → {current_phase}")
@@ -393,10 +415,14 @@ if run_button:
             changes.append(f"Start Date: {prev['start_date']} → {current_start}")
 
         if normalize_date(current_primary) != normalize_date(prev["primary_completion"]):
-            changes.append(f"Primary Completion: {prev['primary_completion']} → {current_primary}")
+            changes.append(
+                f"Primary Completion: {prev['primary_completion']} → {current_primary}"
+            )
 
         if normalize_date(current_completion) != normalize_date(prev["completion"]):
-            changes.append(f"Study Completion: {prev['completion']} → {current_completion}")
+            changes.append(
+                f"Study Completion: {prev['completion']} → {current_completion}"
+            )
 
         added = list(set(current_countries) - set(prev_countries))
         removed = list(set(prev_countries) - set(current_countries))
@@ -408,6 +434,7 @@ if run_button:
             changes.append("Countries Removed: " + ", ".join(sorted(removed)))
 
         if changes:
+
             updates.append(
                 f"[{nct_id}] {sponsor} trial in {conditions} | Phase: {current_phase}: "
                 + "; ".join(changes)
@@ -433,4 +460,3 @@ if run_button:
             f,
             file_name=file_name
         )
-        
