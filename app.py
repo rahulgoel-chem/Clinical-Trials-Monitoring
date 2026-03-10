@@ -119,8 +119,7 @@ if run:
 
     seen_nct = set()
 
-
-    # -------- NEW TRIALS FROM AACT -------- #
+    # -------- AACT NEW TRIALS -------- #
 
     conn = psycopg2.connect(
         host=AACT_HOST,
@@ -136,7 +135,7 @@ if run:
     SELECT DISTINCT
         s.nct_id,
         s.brief_title,
-        sp.agency,
+        sp.name,
         s.study_first_post_date
     FROM studies s
     JOIN sponsors sp
@@ -144,7 +143,7 @@ if run:
     JOIN conditions c
         ON s.nct_id = c.nct_id
     WHERE
-        LOWER(c.name) LIKE %s
+        c.downcase_name LIKE %s
         AND sp.lead_or_collaborator = 'lead'
         AND sp.agency_class = 'INDUSTRY'
         AND s.study_first_post_date BETWEEN %s AND %s
@@ -167,8 +166,7 @@ if run:
     cur.close()
     conn.close()
 
-
-    # -------- CLINICALTRIALS API WITH PAGINATION -------- #
+    # -------- CLINICALTRIALS API PAGINATION -------- #
 
     base_url = "https://clinicaltrials.gov/api/v2/studies"
 
@@ -178,13 +176,12 @@ if run:
     }
 
     studies = []
-
-    next_page_token = None
+    next_token = None
 
     while True:
 
-        if next_page_token:
-            params["pageToken"] = next_page_token
+        if next_token:
+            params["pageToken"] = next_token
 
         response = requests.get(base_url, params=params)
 
@@ -192,13 +189,12 @@ if run:
 
         studies.extend(data.get("studies", []))
 
-        next_page_token = data.get("nextPageToken")
+        next_token = data.get("nextPageToken")
 
-        if not next_page_token:
+        if not next_token:
             break
 
-
-    # -------- PROCESS STUDIES -------- #
+    # -------- UPDATE DETECTION -------- #
 
     for study in studies:
 
@@ -264,7 +260,6 @@ if run:
         updates.append(report)
 
         seen_nct.add(nct_id)
-
 
     st.success(f"New Trials: {len(new_trials)}")
     st.success(f"Updated Trials: {len(updates)}")
