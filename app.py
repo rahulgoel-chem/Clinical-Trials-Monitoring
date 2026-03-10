@@ -20,7 +20,6 @@ AACT_PASS = st.secrets["AACT_PASS"]
 # -------- DATABASE CONNECTION -------- #
 
 def connect_aact():
-
     return psycopg2.connect(
         host=AACT_HOST,
         database=AACT_DB,
@@ -89,18 +88,24 @@ def get_previous_countries(conn, nct_id):
     return sorted([r[0] for r in rows if r[0]])
 
 
-# -------- NEW TRIAL DETECTION (UNCHANGED LOGIC) -------- #
+# -------- NEW TRIAL DETECTION -------- #
 
 def get_new_trials(conn, condition, start_date, end_date):
 
     cur = conn.cursor()
 
     query = """
-    SELECT nct_id, brief_title, phase, lead_sponsor_name
-    FROM studies
-    WHERE study_first_post_date BETWEEN %s AND %s
-    AND lead_sponsor_class = 'INDUSTRY'
-    AND condition LIKE %s
+    SELECT DISTINCT s.nct_id,
+           s.brief_title,
+           s.phase,
+           sp.name
+    FROM studies s
+    JOIN sponsors sp ON s.nct_id = sp.nct_id
+    JOIN conditions c ON s.nct_id = c.nct_id
+    WHERE s.study_first_post_date BETWEEN %s AND %s
+    AND sp.lead_or_collaborator = 'lead'
+    AND sp.agency_class = 'INDUSTRY'
+    AND LOWER(c.name) LIKE LOWER(%s)
     """
 
     cur.execute(query, (start_date, end_date, f"%{condition}%"))
@@ -115,10 +120,10 @@ def get_new_trials(conn, condition, start_date, end_date):
 
         nct_id, title, phase, sponsor = r
 
+        phase = phase if phase else "Trial"
+
         new_trials.append(
-
             f"{sponsor} initiated a {phase} trial: {title} ({nct_id})"
-
         )
 
     return new_trials
@@ -140,13 +145,9 @@ def fetch_all_trials(condition):
     ]
 
     params = {
-
         "query.cond": condition,
-
         "fields": ",".join(fields),
-
         "pageSize": 1000
-
     }
 
     studies = []
@@ -156,7 +157,6 @@ def fetch_all_trials(condition):
     while True:
 
         if token:
-
             params["pageToken"] = token
 
         response = requests.get(base_url, params=params)
@@ -168,7 +168,6 @@ def fetch_all_trials(condition):
         token = data.get("nextPageToken")
 
         if not token:
-
             break
 
     return studies
@@ -264,42 +263,30 @@ def generate_pdf(condition, start, end, new_trials, updates):
     y -= 30
 
 
-    # NEW TRIALS
-
     y = draw_section_title(c, "NEW INDUSTRY TRIALS", y, width)
 
     c.setFont("Helvetica", 10)
 
     if not new_trials:
-
         y = draw_wrapped_text(c, "No new trials detected.", 60, y)
 
     else:
-
         for t in new_trials:
-
             y = draw_wrapped_text(c, f"• {t}", 60, y)
-
             y -= 5
 
 
     y -= 20
 
 
-    # UPDATES
-
     y = draw_section_title(c, "TRIAL UPDATES", y, width)
 
     if not updates:
-
         y = draw_wrapped_text(c, "No updates detected.", 60, y)
 
     else:
-
         for u in updates:
-
             y = draw_wrapped_text(c, f"• {u}", 60, y)
-
             y -= 5
 
 
@@ -333,53 +320,16 @@ if run_button:
 
     conn = connect_aact()
 
-    # -------- NEW TRIALS (UNCHANGED) -------- #
-
-    def get_new_trials(conn, condition, start_date, end_date):
-
-    cur = conn.cursor()
-
-    query = """
-    SELECT DISTINCT s.nct_id,
-           s.brief_title,
-           s.phase,
-           sp.name
-    FROM studies s
-    JOIN sponsors sp ON s.nct_id = sp.nct_id
-    JOIN conditions c ON s.nct_id = c.nct_id
-    WHERE s.study_first_post_date BETWEEN %s AND %s
-    AND sp.lead_or_collaborator = 'lead'
-    AND sp.agency_class = 'INDUSTRY'
-    AND LOWER(c.name) LIKE LOWER(%s)
-    """
-
-    cur.execute(query, (start_date, end_date, f"%{condition}%"))
-
-    rows = cur.fetchall()
-
-    cur.close()
-
-    new_trials = []
-
-    for r in rows:
-
-        nct_id, title, phase, sponsor = r
-
-        phase = phase if phase else "Trial"
-
-        new_trials.append(
-
-            f"{sponsor} initiated a {phase} trial: {title} ({nct_id})"
-
-        )
-
-    return new_trials
-    # -------- FETCH ALL TRIALS -------- #
+    new_trials = get_new_trials(
+        conn,
+        condition,
+        start_date_input,
+        end_date_input
+    )
 
     studies = fetch_all_trials(condition)
 
     updates = []
-
 
     for study in studies:
 
@@ -400,15 +350,12 @@ if run_button:
         upd_date_str = status.get("lastUpdatePostDateStruct", {}).get("date")
 
         if not upd_date_str:
-
             continue
 
         upd_date = datetime.strptime(upd_date_str, "%Y-%m-%d")
 
         if not (start_date <= upd_date.date() <= end_date):
-
             continue
-
 
         current_status = status.get("overallStatus", "NA")
 
@@ -426,113 +373,73 @@ if run_button:
 
         current_enrollment = str(enrollment) if enrollment else "NA"
 
-
         locations = protocol.get("contactsLocationsModule", {}).get("locations", [])
 
         current_countries = sorted(list(set([
-
             loc.get("country") for loc in locations if loc.get("country")
-
         ])))
-
 
         prev = get_previous_trial_data(conn, nct_id)
 
         if not prev:
-
             continue
 
         prev_countries = get_previous_countries(conn, nct_id)
 
         changes = []
 
-
         if current_status != prev["status"]:
-
             changes.append(f"Status: {prev['status']} → {current_status}")
 
-
         if normalize_date(current_start) != normalize_date(prev["start"]):
-
             changes.append(f"Start Date: {prev['start']} → {current_start}")
 
-
         if normalize_date(current_primary) != normalize_date(prev["primary"]):
-
             changes.append(
                 f"Primary Completion: {prev['primary']} → {current_primary}"
             )
 
-
         if normalize_date(current_completion) != normalize_date(prev["completion"]):
-
             changes.append(
                 f"Completion Date: {prev['completion']} → {current_completion}"
             )
 
-
         if current_enrollment != prev["enrollment"]:
-
             changes.append(
                 f"Enrollment: {prev['enrollment']} → {current_enrollment}"
             )
-
 
         added = list(set(current_countries) - set(prev_countries))
 
         removed = list(set(prev_countries) - set(current_countries))
 
-
         if added:
-
             changes.append("Countries Added: " + ", ".join(added))
 
-
         if removed:
-
             changes.append("Countries Removed: " + ", ".join(removed))
 
-
         if changes:
-
             updates.append(
-
-                f"{sponsor}'s trial ({nct_id}) updated: "
-
-                + "; ".join(changes)
-
+                f"{sponsor}'s trial ({nct_id}) updated: " + "; ".join(changes)
             )
-
 
     conn.close()
 
-
     st.success(f"New Trials: {len(new_trials)} | Updates: {len(updates)}")
 
-
     file_name = generate_pdf(
-
         condition,
-
         start_date_input,
-
         end_date_input,
-
         new_trials,
-
         updates
-
     )
-
 
     with open(file_name, "rb") as f:
 
         st.download_button(
-
             "Download PDF Report",
-
             f,
-
             file_name=file_name
-
         )
