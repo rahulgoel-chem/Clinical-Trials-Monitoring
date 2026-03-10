@@ -17,11 +17,7 @@ AACT_USER = st.secrets["AACT_USER"]
 AACT_PASS = st.secrets["AACT_PASS"]
 
 
-# -------- PDF UTIL -------- #
-
-def wrap_text(text, width=90):
-    return wrap(text, width)
-
+# -------- PDF -------- #
 
 def generate_pdf(condition, start_date, end_date, new_trials, updates):
 
@@ -71,10 +67,12 @@ def generate_pdf(condition, start_date, end_date, new_trials, updates):
     if not new_trials:
         c.drawString(70, y, "No new trials detected.")
         y -= 15
+
     else:
+
         for trial in new_trials:
 
-            for line in wrap_text(trial):
+            for line in wrap(trial, 90):
 
                 if y < 60:
                     c.showPage()
@@ -98,13 +96,12 @@ def generate_pdf(condition, start_date, end_date, new_trials, updates):
 
     if not updates:
         c.drawString(70, y, "No updates detected.")
-        y -= 15
 
     else:
 
         for upd in updates:
 
-            for line in wrap_text(upd):
+            for line in wrap(upd, 90):
 
                 if y < 60:
                     c.showPage()
@@ -132,8 +129,6 @@ end_date = st.date_input("End Date")
 run = st.button("Run Monitor")
 
 
-# -------- MAIN LOGIC -------- #
-
 if run:
 
     start = start_date.strftime("%Y-%m-%d")
@@ -144,7 +139,7 @@ if run:
 
     seen_nct = set()
 
-    # -------- AACT DATABASE (NEW TRIALS) -------- #
+    # -------- NEW TRIALS FROM AACT -------- #
 
     conn = psycopg2.connect(
         host=AACT_HOST,
@@ -156,22 +151,25 @@ if run:
 
     cur = conn.cursor()
 
-    query = f"""
-    SELECT
+    query = """
+    SELECT DISTINCT
         s.nct_id,
         s.brief_title,
         sp.name,
         s.study_first_post_date
     FROM studies s
-    JOIN sponsors sp ON s.nct_id = sp.nct_id
+    JOIN sponsors sp
+        ON s.nct_id = sp.nct_id
+    JOIN conditions c
+        ON s.nct_id = c.nct_id
     WHERE
-        LOWER(s.conditions) LIKE '%{condition.lower()}%'
+        LOWER(c.name) LIKE %s
         AND sp.lead_or_collaborator='lead'
         AND sp.agency_class='INDUSTRY'
-        AND s.study_first_post_date BETWEEN '{start}' AND '{end}'
+        AND s.study_first_post_date BETWEEN %s AND %s
     """
 
-    cur.execute(query)
+    cur.execute(query, (f"%{condition.lower()}%", start, end))
 
     rows = cur.fetchall()
 
@@ -188,7 +186,7 @@ if run:
     cur.close()
     conn.close()
 
-    # -------- CLINICALTRIALS JSON (UPDATES) -------- #
+    # -------- UPDATES FROM CLINICALTRIALS API -------- #
 
     url = "https://clinicaltrials.gov/api/v2/studies"
 
@@ -197,13 +195,9 @@ if run:
         "pageSize": 1000
     }
 
-    studies = []
-
     response = requests.get(url, params=params)
 
-    data = response.json()
-
-    studies = data.get("studies", [])
+    studies = response.json().get("studies", [])
 
     for study in studies:
 
@@ -238,11 +232,9 @@ if run:
         if not (start_date <= update_date <= end_date):
             continue
 
-        # Fields monitored
-
         trial_status = status.get("overallStatus", "NA")
 
-        start_date_trial = status.get("startDateStruct", {}).get("date", "NA")
+        start_trial = status.get("startDateStruct", {}).get("date", "NA")
 
         primary = status.get("primaryCompletionDateStruct", {}).get("date", "NA")
 
@@ -261,7 +253,7 @@ if run:
         report = (
             f"[{nct_id}] {sponsor} trial updated: {title} | "
             f"Status: {trial_status} | "
-            f"Start: {start_date_trial} | "
+            f"Start: {start_trial} | "
             f"Primary Completion: {primary} | "
             f"Study Completion: {completion} | "
             f"Enrollment: {enrollment} | "
