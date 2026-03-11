@@ -5,6 +5,11 @@ import json
 import os
 from datetime import datetime
 
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
+from textwrap import wrap
+
+
 # ---------------- CONFIG ---------------- #
 
 AACT_HOST = st.secrets["AACT_HOST"]
@@ -15,17 +20,6 @@ AACT_PASS = st.secrets["AACT_PASS"]
 
 API_URL = "https://clinicaltrials.gov/api/v2/studies"
 
-# ---------------- DB CONNECTION ---------------- #
-
-def connect_aact():
-
-    return psycopg2.connect(
-        host=AACT_HOST,
-        dbname=AACT_DB,
-        user=AACT_USER,
-        password=AACT_PASS,
-        port=AACT_PORT
-    )
 
 # ---------------- SNAPSHOT FUNCTIONS ---------------- #
 
@@ -47,17 +41,18 @@ def load_snapshot(date):
     with open(filename) as f:
         return json.load(f)
 
-# ---------------- FETCH API DATA ---------------- #
 
-def fetch_trials():
+# ---------------- FETCH TRIALS FROM CLINICALTRIALS API ---------------- #
+
+def fetch_trials(condition):
 
     trials = {}
-
     page_token = None
 
     while True:
 
         params = {
+            "query.cond": condition,
             "pageSize": 1000
         }
 
@@ -65,7 +60,6 @@ def fetch_trials():
             params["pageToken"] = page_token
 
         r = requests.get(API_URL, params=params)
-
         data = r.json()
 
         studies = data.get("studies", [])
@@ -74,35 +68,26 @@ def fetch_trials():
 
             protocol = study.get("protocolSection", {})
 
-            identification = protocol.get("identificationModule", {})
+            ident = protocol.get("identificationModule", {})
             status = protocol.get("statusModule", {})
             design = protocol.get("designModule", {})
             conditions = protocol.get("conditionsModule", {})
             sponsor_module = protocol.get("sponsorCollaboratorsModule", {})
             contacts = protocol.get("contactsLocationsModule", {})
 
-            nct_id = identification.get("nctId")
-
+            nct_id = ident.get("nctId")
             if not nct_id:
                 continue
 
-            sponsor = sponsor_module.get(
-                "leadSponsor", {}
-            ).get("name", "Unknown")
+            sponsor = sponsor_module.get("leadSponsor", {}).get("name", "Unknown")
 
-            condition = ", ".join(
-                conditions.get("conditions", [])
-            )
+            condition_val = ", ".join(conditions.get("conditions", []))
 
-            phase = ", ".join(
-                design.get("phases", [])
-            )
+            phase = ", ".join(design.get("phases", []))
 
             status_val = status.get("overallStatus", "NA")
 
-            start_date = status.get(
-                "startDateStruct", {}
-            ).get("date", "NA")
+            start_date = status.get("startDateStruct", {}).get("date", "NA")
 
             primary_completion = status.get(
                 "primaryCompletionDateStruct", {}
@@ -112,10 +97,7 @@ def fetch_trials():
                 "completionDateStruct", {}
             ).get("date", "NA")
 
-            enrollment = design.get(
-                "enrollmentInfo", {}
-            ).get("count")
-
+            enrollment = design.get("enrollmentInfo", {}).get("count")
             enrollment = str(enrollment) if enrollment else "NA"
 
             locations = contacts.get("locations", [])
@@ -132,7 +114,7 @@ def fetch_trials():
 
             trials[nct_id] = {
                 "sponsor": sponsor,
-                "condition": condition,
+                "condition": condition_val,
                 "phase": phase,
                 "status": status_val,
                 "start_date": start_date,
@@ -150,13 +132,66 @@ def fetch_trials():
     return trials
 
 
-# ---------------- COMPARE SNAPSHOTS ---------------- #
+# ---------------- NEW TRIAL DETECTION FROM AACT ---------------- #
+
+def fetch_new_trials(condition, date1, date2):
+
+    conn = psycopg2.connect(
+        host=AACT_HOST,
+        dbname=AACT_DB,
+        user=AACT_USER,
+        password=AACT_PASS,
+        port=AACT_PORT
+    )
+
+    cur = conn.cursor()
+
+    query = """
+    SELECT
+        nct_id,
+        brief_title,
+        phase,
+        overall_status,
+        start_date,
+        primary_completion_date,
+        completion_date,
+        enrollment
+    FROM studies
+    WHERE
+        study_first_post_date BETWEEN %s AND %s
+        AND lead_sponsor_class = 'INDUSTRY'
+        AND LOWER(brief_title) LIKE %s
+    """
+
+    cur.execute(query, (date1, date2, f"%{condition.lower()}%"))
+
+    rows = cur.fetchall()
+
+    new_trials = []
+
+    for r in rows:
+
+        report = (
+            f"[{r[0]}] NEW trial: {r[1]} | "
+            f"Phase: {r[2]} | Status: {r[3]} | "
+            f"Start: {r[4]} | "
+            f"Primary Completion: {r[5]} | "
+            f"Completion: {r[6]} | "
+            f"Enrollment: {r[7]}"
+        )
+
+        new_trials.append(report)
+
+    conn.close()
+
+    return new_trials
+
+
+# ---------------- SNAPSHOT COMPARISON ---------------- #
 
 def compare_snapshots(prev, curr):
 
     updates = []
-
-    seen = set()
 
     for nct_id, curr_data in curr.items():
 
@@ -196,44 +231,123 @@ def compare_snapshots(prev, curr):
         removed = set(prev_data["countries"]) - set(curr_data["countries"])
 
         if added:
-            changes.append(
-                "Countries Added: " + ", ".join(sorted(added))
-            )
+            changes.append("Countries Added: " + ", ".join(sorted(added)))
 
         if removed:
-            changes.append(
-                "Countries Removed: " + ", ".join(sorted(removed))
-            )
+            changes.append("Countries Removed: " + ", ".join(sorted(removed)))
 
-        if changes and nct_id not in seen:
+        if changes:
 
             updates.append(
-                f"[{nct_id}] {curr_data['sponsor']} trial in {curr_data['condition']} | Phase {curr_data['phase']}: "
+                f"[{nct_id}] {curr_data['sponsor']} trial in {curr_data['condition']} | "
+                f"Phase {curr_data['phase']}: "
                 + "; ".join(changes)
             )
-
-            seen.add(nct_id)
 
     return updates
 
 
+# ---------------- PDF GENERATION ---------------- #
+
+def generate_pdf(condition, date1, date2, new_trials, updates):
+
+    filename = f"clinical_trial_report_{condition}_{date1}_{date2}.pdf"
+
+    c = canvas.Canvas(filename, pagesize=letter)
+
+    width, height = letter
+    y = height - 50
+
+    c.setFont("Helvetica-Bold", 16)
+    c.drawCentredString(width / 2, y, "Clinical Trial Intelligence Report")
+
+    y -= 40
+
+    c.setFont("Helvetica", 11)
+
+    c.drawString(50, y, f"Disease: {condition}")
+    y -= 20
+
+    c.drawString(50, y, f"Monitoring Window: {date1} → {date2}")
+    y -= 30
+
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(50, y, "NEW INDUSTRY TRIALS")
+
+    y -= 20
+
+    c.setFont("Helvetica", 10)
+
+    for trial in new_trials:
+
+        lines = wrap(trial, 90)
+
+        for line in lines:
+
+            if y < 60:
+                c.showPage()
+                y = height - 50
+                c.setFont("Helvetica", 10)
+
+            c.drawString(50, y, line)
+            y -= 15
+
+        y -= 5
+
+    y -= 20
+
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(50, y, "TRIAL UPDATES")
+
+    y -= 20
+
+    c.setFont("Helvetica", 10)
+
+    for upd in updates:
+
+        lines = wrap(upd, 90)
+
+        for line in lines:
+
+            if y < 60:
+                c.showPage()
+                y = height - 50
+                c.setFont("Helvetica", 10)
+
+            c.drawString(50, y, line)
+            y -= 15
+
+        y -= 5
+
+    c.save()
+
+    return filename
+
+
 # ---------------- STREAMLIT APP ---------------- #
 
-st.title("Clinical Trial Monitoring")
+st.title("Clinical Trial Intelligence Monitor")
+
+condition = st.text_input("Disease / Condition")
 
 date1 = st.date_input("First Snapshot Date")
+
 date2 = st.date_input("Second Snapshot Date")
+
 
 if st.button("Run Monitor"):
 
-    st.write("Fetching ClinicalTrials.gov data...")
+    if not condition:
+        st.warning("Please enter a disease/condition.")
+        st.stop()
 
-    trials = fetch_trials()
+    st.write("Fetching trials from ClinicalTrials.gov...")
+
+    trials = fetch_trials(condition)
 
     date1 = str(date1)
     date2 = str(date2)
 
-    # Save snapshots
     save_snapshot(trials, date2)
 
     prev_snapshot = load_snapshot(date1)
@@ -241,18 +355,30 @@ if st.button("Run Monitor"):
 
     if not prev_snapshot:
         st.warning(
-            f"No snapshot exists for {date1}. Run monitor once on that date first."
+            f"No snapshot found for {date1}. Run once on that date first."
         )
         st.stop()
 
     updates = compare_snapshots(prev_snapshot, curr_snapshot)
 
+    new_trials = fetch_new_trials(condition, date1, date2)
+
+    st.subheader("New Industry Trials")
+
+    for t in new_trials:
+        st.write(t)
+
     st.subheader("Trial Updates")
 
-    if updates:
+    for u in updates:
+        st.write(u)
 
-        for u in updates:
-            st.write(u)
+    pdf_file = generate_pdf(condition, date1, date2, new_trials, updates)
 
-    else:
-        st.write("No updates detected.")
+    with open(pdf_file, "rb") as f:
+
+        st.download_button(
+            "Download PDF Report",
+            f,
+            file_name=pdf_file
+        )
