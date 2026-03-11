@@ -3,8 +3,8 @@ import requests
 import psycopg2
 import json
 import os
-
 from datetime import datetime
+
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 from textwrap import wrap
@@ -21,38 +21,42 @@ AACT_PASS = st.secrets["AACT_PASS"]
 API_URL = "https://clinicaltrials.gov/api/v2/studies"
 
 
-# ---------------- SNAPSHOT FUNCTIONS ---------------- #
+# ---------------- SNAPSHOT UTILS ---------------- #
+
+def snapshot_file(date):
+    return f"snapshot_{date}.json"
+
 
 def save_snapshot(data, date):
 
-    filename = f"snapshot_{date}.json"
-
-    with open(filename, "w") as f:
+    with open(snapshot_file(date), "w") as f:
         json.dump(data, f)
 
 
 def load_snapshot(date):
 
-    filename = f"snapshot_{date}.json"
+    file = snapshot_file(date)
 
-    if not os.path.exists(filename):
+    if not os.path.exists(file):
         return {}
 
-    with open(filename) as f:
+    with open(file) as f:
         return json.load(f)
 
 
-# ---------------- FETCH TRIALS FROM CLINICALTRIALS ---------------- #
+# ---------------- FETCH UPDATED TRIALS ---------------- #
 
-def fetch_trials(condition):
+def fetch_trials(condition, date1, date2):
 
     trials = {}
+
     page_token = None
 
     while True:
 
         params = {
             "query.cond": condition,
+            "filter.lastUpdatePostDate": f"{date1}:{date2}",
             "pageSize": 1000
         }
 
@@ -60,6 +64,7 @@ def fetch_trials(condition):
             params["pageToken"] = page_token
 
         r = requests.get(API_URL, params=params)
+
         data = r.json()
 
         studies = data.get("studies", [])
@@ -80,13 +85,17 @@ def fetch_trials(condition):
             if not nct_id:
                 continue
 
-            sponsor = sponsor_mod.get("leadSponsor", {}).get("name", "Unknown")
+            sponsor = sponsor_mod.get(
+                "leadSponsor", {}
+            ).get("name", "Unknown")
 
             phase = ", ".join(design.get("phases", []))
 
             status_val = status.get("overallStatus", "NA")
 
-            start_date = status.get("startDateStruct", {}).get("date", "NA")
+            start_date = status.get(
+                "startDateStruct", {}
+            ).get("date", "NA")
 
             primary_completion = status.get(
                 "primaryCompletionDateStruct", {}
@@ -96,10 +105,15 @@ def fetch_trials(condition):
                 "completionDateStruct", {}
             ).get("date", "NA")
 
-            enrollment = design.get("enrollmentInfo", {}).get("count")
+            enrollment = design.get(
+                "enrollmentInfo", {}
+            ).get("count")
+
             enrollment = str(enrollment) if enrollment else "NA"
 
-            condition_val = ", ".join(cond_mod.get("conditions", []))
+            condition_val = ", ".join(
+                cond_mod.get("conditions", [])
+            )
 
             locations = contacts.get("locations", [])
 
@@ -133,7 +147,7 @@ def fetch_trials(condition):
     return trials
 
 
-# ---------------- AACT NEW TRIALS ---------------- #
+# ---------------- NEW INDUSTRY TRIALS (AACT) ---------------- #
 
 def fetch_new_trials(condition, date1, date2):
 
@@ -148,7 +162,7 @@ def fetch_new_trials(condition, date1, date2):
     cur = conn.cursor()
 
     query = """
-    SELECT
+    SELECT DISTINCT
     s.nct_id,
     s.brief_title,
     s.phase,
@@ -158,32 +172,46 @@ def fetch_new_trials(condition, date1, date2):
     s.completion_date,
     s.enrollment
     FROM studies s
+    JOIN sponsors sp
+    ON s.nct_id = sp.nct_id
     JOIN conditions c
     ON s.nct_id = c.nct_id
     WHERE
     s.study_first_post_date BETWEEN %s AND %s
-    AND s.lead_sponsor_class = 'INDUSTRY'
+    AND sp.agency_class = 'INDUSTRY'
     AND LOWER(c.name) LIKE %s
     """
 
-    cur.execute(query, (date1, date2, f"%{condition.lower()}%"))
+    cur.execute(
+        query,
+        (date1, date2, f"%{condition.lower()}%")
+    )
 
     rows = cur.fetchall()
 
-    new_trials = []
+    conn.close()
+
+    trials = []
+
+    seen = set()
 
     for r in rows:
 
-        text = (
-            f"[{r[0]}] NEW trial: {r[1]} | Phase {r[2]} | Status {r[3]} | "
-            f"Start {r[4]} | Primary Completion {r[5]} | Completion {r[6]} | Enrollment {r[7]}"
+        if r[0] in seen:
+            continue
+
+        seen.add(r[0])
+
+        trials.append(
+            f"[{r[0]}] NEW trial: {r[1]} | "
+            f"Phase {r[2]} | Status {r[3]} | "
+            f"Start {r[4]} | "
+            f"Primary Completion {r[5]} | "
+            f"Completion {r[6]} | "
+            f"Enrollment {r[7]}"
         )
 
-        new_trials.append(text)
-
-    conn.close()
-
-    return new_trials
+    return trials
 
 
 # ---------------- SNAPSHOT COMPARISON ---------------- #
@@ -230,26 +258,31 @@ def compare_snapshots(prev, curr):
         removed = set(prev_data["countries"]) - set(curr_data["countries"])
 
         if added:
-            changes.append("Countries Added: " + ", ".join(sorted(added)))
+            changes.append(
+                "Countries Added: " + ", ".join(sorted(added))
+            )
 
         if removed:
-            changes.append("Countries Removed: " + ", ".join(sorted(removed)))
+            changes.append(
+                "Countries Removed: " + ", ".join(sorted(removed))
+            )
 
         if changes:
 
             updates.append(
-                f"[{nct_id}] {curr_data['sponsor']} trial in {curr_data['condition']} | Phase {curr_data['phase']} : "
+                f"[{nct_id}] {curr_data['sponsor']} trial in "
+                f"{curr_data['condition']} | Phase {curr_data['phase']} : "
                 + "; ".join(changes)
             )
 
     return updates
 
 
-# ---------------- PDF REPORT ---------------- #
+# ---------------- PDF GENERATION ---------------- #
 
 def generate_pdf(condition, date1, date2, new_trials, updates):
 
-    filename = f"clinical_trials_report_{condition}.pdf"
+    filename = f"trial_report_{condition}_{date2}.pdf"
 
     c = canvas.Canvas(filename, pagesize=letter)
 
@@ -257,7 +290,12 @@ def generate_pdf(condition, date1, date2, new_trials, updates):
     y = height - 40
 
     c.setFont("Helvetica-Bold", 16)
-    c.drawCentredString(width/2, y, "Clinical Trial Intelligence Report")
+
+    c.drawCentredString(
+        width/2,
+        y,
+        "Clinical Trial Intelligence Report"
+    )
 
     y -= 40
 
@@ -267,20 +305,18 @@ def generate_pdf(condition, date1, date2, new_trials, updates):
     y -= 20
 
     c.drawString(50, y, f"Monitoring Window: {date1} → {date2}")
-
     y -= 30
 
     c.setFont("Helvetica-Bold", 12)
     c.drawString(50, y, "NEW INDUSTRY TRIALS")
 
     y -= 20
+
     c.setFont("Helvetica", 10)
 
     for t in new_trials:
 
-        lines = wrap(t, 90)
-
-        for line in lines:
+        for line in wrap(t, 90):
 
             if y < 50:
                 c.showPage()
@@ -295,13 +331,12 @@ def generate_pdf(condition, date1, date2, new_trials, updates):
     c.drawString(50, y, "TRIAL UPDATES")
 
     y -= 20
+
     c.setFont("Helvetica", 10)
 
     for u in updates:
 
-        lines = wrap(u, 90)
-
-        for line in lines:
+        for line in wrap(u, 90):
 
             if y < 50:
                 c.showPage()
@@ -319,7 +354,7 @@ def generate_pdf(condition, date1, date2, new_trials, updates):
 
 st.title("Clinical Trial Monitoring System")
 
-condition = st.text_input("Enter Disease / Condition")
+condition = st.text_input("Disease / Condition")
 
 date1 = st.date_input("First Snapshot Date")
 date2 = st.date_input("Second Snapshot Date")
@@ -328,45 +363,40 @@ date2 = st.date_input("Second Snapshot Date")
 if st.button("Run Monitor"):
 
     if not condition:
-        st.warning("Please enter disease name")
+        st.warning("Please enter a disease.")
         st.stop()
 
-    date1_str = str(date1)
-    date2_str = str(date2)
+    date1 = str(date1)
+    date2 = str(date2)
 
-    snapshot1 = f"snapshot_{date1_str}.json"
-    snapshot2 = f"snapshot_{date2_str}.json"
+    if not os.path.exists(snapshot_file(date1)):
 
-    st.write("Checking snapshots...")
+        st.write("Creating first snapshot...")
 
-    if not os.path.exists(snapshot1):
+        trials = fetch_trials(condition, date1, date2)
 
-        st.write(f"Creating snapshot for {date1_str}")
-
-        trials = fetch_trials(condition)
-
-        save_snapshot(trials, date1_str)
+        save_snapshot(trials, date1)
 
         st.warning(
-            f"Snapshot for {date1_str} created. Run again for comparison."
+            "First snapshot created. Run again to compare."
         )
 
         st.stop()
 
-    if not os.path.exists(snapshot2):
+    if not os.path.exists(snapshot_file(date2)):
 
-        st.write(f"Creating snapshot for {date2_str}")
+        st.write("Creating second snapshot...")
 
-        trials = fetch_trials(condition)
+        trials = fetch_trials(condition, date1, date2)
 
-        save_snapshot(trials, date2_str)
+        save_snapshot(trials, date2)
 
-    prev_snapshot = load_snapshot(date1_str)
-    curr_snapshot = load_snapshot(date2_str)
+    prev_snapshot = load_snapshot(date1)
+    curr_snapshot = load_snapshot(date2)
 
     updates = compare_snapshots(prev_snapshot, curr_snapshot)
 
-    new_trials = fetch_new_trials(condition, date1_str, date2_str)
+    new_trials = fetch_new_trials(condition, date1, date2)
 
     st.subheader("New Industry Trials")
 
@@ -374,7 +404,7 @@ if st.button("Run Monitor"):
         for t in new_trials:
             st.write(t)
     else:
-        st.write("No new trials detected")
+        st.write("No new trials detected.")
 
     st.subheader("Trial Updates")
 
@@ -382,14 +412,14 @@ if st.button("Run Monitor"):
         for u in updates:
             st.write(u)
     else:
-        st.write("No updates detected")
+        st.write("No updates detected.")
 
-    pdf_file = generate_pdf(condition, date1_str, date2_str, new_trials, updates)
+    pdf = generate_pdf(condition, date1, date2, new_trials, updates)
 
-    with open(pdf_file, "rb") as f:
+    with open(pdf, "rb") as f:
 
         st.download_button(
             "Download PDF Report",
             f,
-            file_name=pdf_file
+            file_name=pdf
         )
